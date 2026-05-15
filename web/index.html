@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <title>OpenAI API Debugger (兼容 Chat Completions / Responses)</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="app">
+    <!-- 左侧配置区 -->
+    <aside class="config">
+      <h1>OpenAI API 调试器</h1>
+
+      <section class="card endpoint-section">
+        <h2>端点配置</h2>
+        <label for="baseUrl">Base URL</label>
+        <input id="baseUrl" type="text" placeholder="https://api.openai.com/v1">
+
+        <label for="endpointPath">端点路径</label>
+        <input id="endpointPath" type="text" placeholder="/chat/completions 或 /responses">
+
+        <label for="httpMethod">HTTP 方法</label>
+        <select id="httpMethod">
+          <option value="POST" selected>POST</option>
+          <option value="GET">GET</option>
+        </select>
+
+        <div class="final-url">
+          <span>请求 URL：</span>
+          <span id="finalUrl"></span>
+        </div>
+      </section>
+
+      <section class="card headers-section">
+        <h2>请求头</h2>
+        <div id="headersContainer"></div>
+        <button type="button" id="addHeaderBtn">+ 添加请求头</button>
+      </section>
+
+      <section class="card mode-switch">
+        <h2>编辑模式</h2>
+        <div class="tab-bar">
+          <button class="tab active" data-mode="form">表单模式</button>
+          <button class="tab" data-mode="json">JSON 模式</button>
+        </div>
+      </section>
+
+      <section class="card form-mode" id="formMode">
+        <h2>请求参数（表单）</h2>
+        <div id="formContainer"></div>
+        <button type="button" id="addParamBtn">+ 添加自定义参数</button>
+      </section>
+
+      <section class="card json-mode" id="jsonMode" style="display:none;">
+        <h2>请求体（JSON）</h2>
+        <textarea id="requestJson" spellcheck="false"></textarea>
+        <div class="json-actions">
+          <button type="button" id="formatJsonBtn">格式化</button>
+          <button type="button" id="parseJsonBtn">解析 JSON 到表单</button>
+        </div>
+        <div id="jsonError" class="error-text"></div>
+      </section>
+
+      <section class="card actions">
+        <button type="button" id="sendBtn">发送请求</button>
+        <button type="button" id="abortBtn" disabled>中止请求</button>
+        <span id="requestTime"></span>
+      </section>
+    </aside>
+
+    <!-- 右侧响应/历史区 -->
+    <main class="response-area">
+      <section class="card response-card">
+        <h2>响应</h2>
+        <div class="status-line">
+          <span>HTTP 状态：<strong id="httpStatus">-</strong></span>
+          <span>耗时：<strong id="duration">-</strong></span>
+        </div>
+        <div class="tab-bar">
+          <button class="tab active" data-view="pretty">智能预览</button>
+          <button class="tab" data-view="raw">原始文本</button>
+        </div>
+        <div id="responseContainer" class="response-container"></div>
+      </section>
+
+      <section class="card history-card">
+        <h2>历史记录</h2>
+        <div class="history-toolbar">
+          <button type="button" id="clearHistoryBtn">清空历史</button>
+          <button type="button" id="exportHistoryBtn">导出历史 (JSON)</button>
+        </div>
+        <ul id="historyList"></ul>
+      </section>
+    </main>
+  </div>
+
+  <div id="toastContainer"></div>
+
+  <script src="config.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
