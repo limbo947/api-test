@@ -743,8 +743,12 @@ function bindEvents() {
 function showConfirm(message, onConfirm) {
   const overlay = document.createElement('div');
   overlay.className = 'confirm-overlay';
+  overlay.setAttribute('role', 'dialog');
+  overlay.setAttribute('aria-modal', 'true');
+  overlay.setAttribute('aria-labelledby', 'confirm-title');
   overlay.innerHTML = `
     <div class="confirm-dialog">
+      <h3 id="confirm-title" class="confirm-title">确认操作</h3>
       <p>${escapeHtml(message)}</p>
       <div class="confirm-actions">
         <button type="button" class="confirm-cancel">取消</button>

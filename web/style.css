@@ -75,6 +75,12 @@ input, select, textarea {
   font-size: 0.85rem;
 }
 
+select {
+  background-color: var(--card-alt);
+  color: var(--text);
+  cursor: pointer;
+}
+
 input:focus-visible, select:focus-visible, textarea:focus-visible {
   border-color: var(--accent);
   box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.4);
@@ -415,6 +421,12 @@ button.small {
   max-width: 360px;
   width: 90%;
   text-align: center;
+}
+
+.confirm-dialog h3 {
+  margin-bottom: 12px;
+  font-size: 1rem;
+  color: var(--text);
 }
 
 .confirm-dialog p {
