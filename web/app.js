@@ -1,5 +1,11 @@
 // app.js – 主逻辑
 
+function escapeHtml(str) {
+  const div = document.createElement('div');
+  div.textContent = str;
+  return div.innerHTML;
+}
+
 let currentConfig = createDefaultConfig();
 let configList = loadConfigList();
 let history = loadHistory();
@@ -73,9 +79,9 @@ function renderHeaders() {
   currentConfig.headers.forEach((h, idx) => {
     const row = document.createElement('div');
     row.innerHTML = `
-      <input type="text" value="${h.key}" data-idx="${idx}" class="header-key">
-      <input type="text" value="${h.value}" data-idx="${idx}" class="header-value">
-      <button type="button" class="danger small" data-idx="${idx}">删除</button>
+      <input type="text" value="${escapeHtml(h.key)}" data-idx="${idx}" class="header-key" aria-label="请求头名称" spellcheck="false" autocomplete="off">
+      <input type="text" value="${escapeHtml(h.value)}" data-idx="${idx}" class="header-value" aria-label="请求头值" spellcheck="false" autocomplete="off">
+      <button type="button" class="danger small" data-idx="${idx}" aria-label="删除请求头">删除</button>
     `;
     headersContainer.appendChild(row);
   });
@@ -100,20 +106,20 @@ function renderFormMode() {
     const row = document.createElement('div');
     row.className = 'param-row';
     row.innerHTML = `
-      <label>role</label>
-      <select data-msg-idx="${idx}" class="msg-role">
+      <label for="msg-role-${idx}">role</label>
+      <select id="msg-role-${idx}" data-msg-idx="${idx}" class="msg-role">
         <option value="system" ${m.role === 'system' ? 'selected' : ''}>system</option>
         <option value="user" ${m.role === 'user' ? 'selected' : ''}>user</option>
         <option value="assistant" ${m.role === 'assistant' ? 'selected' : ''}>assistant</option>
         <option value="tool" ${m.role === 'tool' ? 'selected' : ''}>tool</option>
       </select>
-      <button type="button" class="danger small" data-msg-idx="${idx}">删除</button>
+      <button type="button" class="danger small" data-msg-idx="${idx}" aria-label="删除消息">删除</button>
     `;
     const contentRow = document.createElement('div');
     contentRow.className = 'param-row';
     contentRow.innerHTML = `
-      <label>content</label>
-      <textarea data-msg-idx="${idx}" class="msg-content" rows="2">${m.content || ''}</textarea>
+      <label for="msg-content-${idx}">content</label>
+      <textarea id="msg-content-${idx}" data-msg-idx="${idx}" class="msg-content" rows="2">${escapeHtml(m.content || '')}</textarea>
       <span></span>
     `;
     msgDiv.appendChild(row);
@@ -143,17 +149,18 @@ function renderFormMode() {
 
     if (p.type === 'checkbox') {
       row.innerHTML = `
-        <label>${p.name}</label>
-        <input type="checkbox" data-param="${p.name}" ${value ? 'checked' : ''}>
+        <label for="param-${p.name}">${p.name}</label>
+        <input id="param-${p.name}" type="checkbox" data-param="${p.name}" ${value ? 'checked' : ''}>
         <span></span>
       `;
     } else {
       const inputType = p.type === 'number' ? 'number' : 'text';
       const val = value ?? p.default ?? '';
       row.innerHTML = `
-        <label>${p.name}</label>
-        <input type="${inputType}" data-param="${p.name}" value="${val}" 
-               min="${p.min ?? ''}" max="${p.max ?? ''}" step="${p.step ?? ''}" placeholder="${p.placeholder || ''}">
+        <label for="param-${p.name}">${p.name}</label>
+        <input id="param-${p.name}" type="${inputType}" data-param="${p.name}" value="${escapeHtml(String(val))}" 
+               min="${p.min ?? ''}" max="${p.max ?? ''}" step="${p.step ?? ''}" placeholder="${p.placeholder || ''}…"
+               autocomplete="off" spellcheck="false">
         <span></span>
       `;
     }
@@ -169,9 +176,9 @@ function renderFormMode() {
     const row = document.createElement('div');
     row.className = 'param-row';
     row.innerHTML = `
-      <input type="text" value="${p.key}" data-custom-idx="${idx}" class="custom-key" placeholder="参数名">
-      <input type="text" value="${p.value}" data-custom-idx="${idx}" class="custom-value" placeholder="参数值（JSON 字符串或普通文本）">
-      <button type="button" class="danger small" data-custom-idx="${idx}">删除</button>
+      <input type="text" value="${escapeHtml(p.key)}" data-custom-idx="${idx}" class="custom-key" placeholder="参数名…" aria-label="自定义参数名" spellcheck="false" autocomplete="off">
+      <input type="text" value="${escapeHtml(String(p.value))}" data-custom-idx="${idx}" class="custom-value" placeholder="参数值（JSON 字符串或普通文本）…" aria-label="自定义参数值" spellcheck="false" autocomplete="off">
+      <button type="button" class="danger small" data-custom-idx="${idx}" aria-label="删除自定义参数">删除</button>
     `;
     customDiv.appendChild(row);
   });
@@ -249,7 +256,7 @@ function jsonToConfig(json) {
     jsonError.textContent = '';
     return true;
   } catch (e) {
-    jsonError.textContent = 'JSON 解析错误：' + e.message;
+    jsonError.textContent = 'JSON 解析错误：' + e.message + '，请检查括号、引号是否匹配';
     return false;
   }
 }
@@ -309,7 +316,7 @@ function buildRequestParams() {
     url,
     method: httpMethodSelect.value,
     headers,
-    body: (method === 'POST' || method === 'PUT') ? body : undefined
+    body: (httpMethodSelect.value === 'POST' || httpMethodSelect.value === 'PUT') ? body : undefined
   };
 }
 
@@ -335,6 +342,7 @@ async function sendRequest() {
 
   abortController = new AbortController();
   sendBtn.disabled = true;
+  sendBtn.innerHTML = '<span class="spinner"></span>请求中…';
   abortBtn.disabled = false;
   requestStartTime = Date.now();
   streamingResponse = '';
@@ -389,6 +397,7 @@ async function sendRequest() {
     }
   } finally {
     sendBtn.disabled = false;
+    sendBtn.textContent = '发送请求';
     abortBtn.disabled = true;
     abortController = null;
   }
@@ -468,6 +477,7 @@ function renderBlobResponse(blob, contentType) {
   if (contentType.startsWith('image/')) {
     const img = document.createElement('img');
     img.src = url;
+    img.alt = 'API 响应图片';
     responseContainer.appendChild(img);
   } else if (contentType.startsWith('audio/')) {
     const audio = document.createElement('audio');
@@ -508,15 +518,30 @@ function addHistory(params, httpStatus, duration) {
 
 function renderHistory() {
   historyList.innerHTML = '';
+  if (history.length === 0) {
+    const empty = document.createElement('li');
+    empty.className = 'empty-state';
+    empty.textContent = '暂无历史记录，发送请求后会自动保存';
+    empty.style.cursor = 'default';
+    historyList.appendChild(empty);
+    return;
+  }
+  const dtFormat = new Intl.DateTimeFormat('zh-CN', {
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit'
+  });
   history.forEach(item => {
     const li = document.createElement('li');
     li.dataset.id = item.id;
+    li.tabIndex = 0;
+    li.setAttribute('role', 'button');
+    li.setAttribute('aria-label', `${item.method} ${item.httpStatus} ${item.url}`);
     li.innerHTML = `
       <div class="history-meta">
-        <span>${new Date(item.timestamp).toLocaleString()}</span>
+        <span>${dtFormat.format(new Date(item.timestamp))}</span>
         <span>${item.method} ${item.httpStatus} ${item.duration}ms</span>
       </div>
-      <div class="history-url">${item.url}</div>
+      <div class="history-url">${escapeHtml(item.url)}</div>
     `;
     historyList.appendChild(li);
   });
@@ -548,7 +573,7 @@ function loadHistoryToConfig(id) {
     renderFormMode();
     requestJson.value = JSON.stringify(body, null, 2);
   } catch (e) {
-    showToast('历史配置加载失败：' + e.message, 'error');
+    showToast('历史配置加载失败：' + e.message + '，请尝试手动填写参数', 'error');
   }
 
   updateFinalUrl();
@@ -654,7 +679,7 @@ function bindEvents() {
       requestJson.value = JSON.stringify(obj, null, 2);
       jsonError.textContent = '';
     } catch (e) {
-      jsonError.textContent = '格式化失败：' + e.message;
+      jsonError.textContent = '格式化失败：' + e.message + '，请检查 JSON 语法是否正确';
     }
   });
 
@@ -680,10 +705,22 @@ function bindEvents() {
     loadHistoryToConfig(id);
   });
 
+  historyList.addEventListener('keydown', e => {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      const li = e.target.closest('li');
+      if (!li) return;
+      const id = +li.dataset.id;
+      loadHistoryToConfig(id);
+    }
+  });
+
   clearHistoryBtn.addEventListener('click', () => {
-    history = [];
-    saveHistory(history);
-    renderHistory();
+    showConfirm('确定要清空所有历史记录吗？此操作不可撤销。', () => {
+      history = [];
+      saveHistory(history);
+      renderHistory();
+    });
   });
 
   exportHistoryBtn.addEventListener('click', () => {
@@ -703,5 +740,33 @@ function bindEvents() {
   }
 }
 
-// 启动
+function showConfirm(message, onConfirm) {
+  const overlay = document.createElement('div');
+  overlay.className = 'confirm-overlay';
+  overlay.setAttribute('role', 'dialog');
+  overlay.setAttribute('aria-modal', 'true');
+  overlay.setAttribute('aria-labelledby', 'confirm-title');
+  overlay.innerHTML = `
+    <div class="confirm-dialog">
+      <h3 id="confirm-title" class="confirm-title">确认操作</h3>
+      <p>${escapeHtml(message)}</p>
+      <div class="confirm-actions">
+        <button type="button" class="confirm-cancel">取消</button>
+        <button type="button" class="danger confirm-ok">确认</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+
+  overlay.querySelector('.confirm-cancel').addEventListener('click', () => overlay.remove());
+  overlay.querySelector('.confirm-ok').addEventListener('click', () => {
+    overlay.remove();
+    onConfirm();
+  });
+  overlay.addEventListener('keydown', e => {
+    if (e.key === 'Escape') overlay.remove();
+  });
+  overlay.querySelector('.confirm-ok').focus();
+}
+
 init();
