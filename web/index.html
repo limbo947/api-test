@@ -3,6 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="theme-color" content="#0f172a">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src *; img-src 'self' data: blob:; media-src 'self' blob:; font-src 'self'">
   <title>OpenAI API Debugger (兼容 Chat Completions / Responses)</title>
   <link rel="stylesheet" href="style.css">
 </head>
@@ -13,32 +14,6 @@
     <aside class="config">
       <h1>OpenAI API 调试器</h1>
 
-      <section class="card endpoint-section">
-        <h2>端点配置</h2>
-        <label for="baseUrl">Base URL</label>
-        <input id="baseUrl" type="url" autocomplete="url" placeholder="https://api.openai.com/v1…">
-
-        <label for="endpointPath">端点路径</label>
-        <input id="endpointPath" type="text" autocomplete="off" placeholder="/chat/completions 或 /responses…">
-
-        <label for="httpMethod">HTTP 方法</label>
-        <select id="httpMethod" autocomplete="off">
-          <option value="POST" selected>POST</option>
-          <option value="GET">GET</option>
-        </select>
-
-        <div class="final-url">
-          <span>请求 URL：</span>
-          <span id="finalUrl"></span>
-        </div>
-      </section>
-
-      <section class="card headers-section">
-        <h2>请求头</h2>
-        <div id="headersContainer"></div>
-        <button type="button" id="addHeaderBtn">+ 添加请求头</button>
-      </section>
-
       <section class="card mode-switch">
         <h2>编辑模式</h2>
         <div class="tab-bar">
@@ -48,14 +23,49 @@
       </section>
 
       <section class="card form-mode" id="formMode">
+        <h2>端点配置</h2>
+        <label for="baseUrl">Base URL</label>
+        <div class="input-row">
+          <input id="baseUrl" type="url" autocomplete="url" placeholder="https://api.openai.com/v1…">
+          <button type="button" id="fetchModelsBtn" class="small" title="从 /models 端点获取模型列表">获取模型</button>
+        </div>
+        <div id="modelFetchStatus" class="fetch-status"></div>
+
+        <label for="endpointPath">端点路径</label>
+        <select id="endpointPathSelect" autocomplete="off">
+        </select>
+        <input id="endpointPath" type="text" autocomplete="off" placeholder="/chat/completions 或 /responses…" style="margin-top: 0.5rem;">
+
+        <label for="httpMethod">HTTP 方法</label>
+        <select id="httpMethod" autocomplete="off">
+          <option value="POST" selected>POST</option>
+          <option value="GET">GET</option>
+          <option value="PUT">PUT</option>
+          <option value="DELETE">DELETE</option>
+          <option value="PATCH">PATCH</option>
+        </select>
+
+        <div class="final-url">
+          <span>请求 URL：</span>
+          <span id="finalUrl"></span>
+        </div>
+      </section>
+
+      <section class="card form-mode" id="formHeadersSection">
+        <h2>请求头</h2>
+        <div id="headersContainer"></div>
+        <button type="button" id="addHeaderBtn">+ 添加请求头</button>
+      </section>
+
+      <section class="card form-mode" id="formBodySection">
         <h2>请求参数（表单）</h2>
         <div id="formContainer"></div>
         <button type="button" id="addParamBtn">+ 添加自定义参数</button>
       </section>
 
       <section class="card json-mode" id="jsonMode" style="display:none;">
-        <h2>请求体（JSON）</h2>
-        <textarea id="requestJson" spellcheck="false" aria-label="请求体 JSON" autocomplete="off"></textarea>
+        <h2>完整配置（JSON）</h2>
+        <textarea id="requestJson" spellcheck="false" aria-label="完整配置 JSON" autocomplete="off"></textarea>
         <div class="json-actions">
           <button type="button" id="formatJsonBtn">格式化</button>
           <button type="button" id="parseJsonBtn">解析 JSON 到表单</button>
@@ -63,9 +73,30 @@
         <div id="jsonError" class="error-text"></div>
       </section>
 
+      <section class="card config-manager">
+        <h2>配置方案</h2>
+        <div class="config-toolbar">
+          <select id="configSelect" autocomplete="off">
+            <option value="">-- 选择已保存的配置 --</option>
+          </select>
+          <button type="button" id="loadConfigBtn">加载</button>
+          <button type="button" id="deleteConfigBtn" class="danger">删除</button>
+        </div>
+        <div class="config-save-row">
+          <input type="text" id="configNameInput" placeholder="配置名称…" autocomplete="off" spellcheck="false">
+          <button type="button" id="saveConfigBtn">保存配置</button>
+        </div>
+        <div class="config-io-row">
+          <button type="button" id="exportConfigBtn">导出配置 (JSON)</button>
+          <button type="button" id="importConfigBtn">导入配置</button>
+          <input type="file" id="importConfigFile" accept=".json" style="display:none;">
+        </div>
+      </section>
+
       <section class="card actions">
         <button type="button" id="sendBtn">发送请求</button>
         <button type="button" id="abortBtn" disabled>中止请求</button>
+        <button type="button" id="shareUrlBtn" class="small">分享链接</button>
         <span id="requestTime"></span>
       </section>
     </aside>
@@ -97,6 +128,46 @@
   </div>
 
   <div id="toastContainer" aria-live="polite"></div>
+
+  <template id="tmplHeaderRow">
+    <div>
+      <input type="text" class="header-key" aria-label="请求头名称" spellcheck="false" autocomplete="off">
+      <input type="text" class="header-value" aria-label="请求头值" spellcheck="false" autocomplete="off">
+      <button type="button" class="danger small" aria-label="删除请求头">删除</button>
+    </div>
+  </template>
+
+  <template id="tmplMsgRow">
+    <div>
+      <div class="param-row">
+        <label for="">role</label>
+        <select class="msg-role" autocomplete="off">
+          <option value="system">system</option>
+          <option value="user">user</option>
+          <option value="assistant">assistant</option>
+          <option value="tool">tool</option>
+        </select>
+        <button type="button" class="danger small" aria-label="删除消息">删除</button>
+      </div>
+      <div class="param-row">
+        <label for="">content</label>
+        <textarea class="msg-content" rows="2"></textarea>
+        <span></span>
+      </div>
+    </div>
+  </template>
+
+  <template id="tmplHistoryItem">
+    <li tabindex="0" role="button">
+      <div class="history-meta">
+        <span class="history-time"></span>
+        <span class="history-status"></span>
+      </div>
+      <div class="history-url"></div>
+    </li>
+  </template>
+
+  <datalist id="modelDatalist"></datalist>
 
   <script src="config.js"></script>
   <script src="app.js"></script>

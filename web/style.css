@@ -4,13 +4,16 @@
   --card-alt: #020617;
   --border: #1f2937;
   --text: #e5e7eb;
-  --text-muted: #9ca3af;
+  --text-muted: #b0b9c5;
   --accent: #3b82f6;
   --accent-hover: #2563eb;
   --danger: #ef4444;
   --success: #22c55e;
   --code-bg: #020617;
   --radius: 8px;
+  --scrollbar-track: #1f2937;
+  --scrollbar-thumb: #4b5563;
+  --scrollbar-thumb-hover: #6b7280;
 }
 
 * {
@@ -24,6 +27,31 @@ body {
   background: var(--bg);
   color: var(--text);
   line-height: 1.5;
+  scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
+}
+
+/* WebKit 浏览器自定义滚动条 */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--scrollbar-track);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--scrollbar-thumb-hover);
+}
+
+::-webkit-scrollbar-corner {
+  background: var(--scrollbar-track);
 }
 
 .app {
@@ -133,6 +161,42 @@ button.small {
   color: var(--text);
 }
 
+.input-row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.input-row input {
+  flex: 1;
+  min-width: 0;
+}
+
+.input-row button {
+  flex-shrink: 0;
+  white-space: nowrap;
+  margin-top: 0;
+}
+
+.fetch-status {
+  font-size: 0.75rem;
+  margin-top: 4px;
+  min-height: 1.2em;
+  color: var(--text-muted);
+}
+
+.fetch-status.loading {
+  color: var(--accent);
+}
+
+.fetch-status.success {
+  color: var(--success);
+}
+
+.fetch-status.error {
+  color: var(--danger);
+}
+
 .tab-bar {
   display: flex;
   gap: 8px;
@@ -186,9 +250,21 @@ button.small {
   padding-bottom: 8px;
 }
 
+/* 自定义参数预设选择器样式 */
+#customParamPreset {
+  width: 100%;
+  margin-bottom: 6px;
+}
+
+/* 端点路径选择器 */
+#endpointPathSelect {
+  width: 100%;
+  margin-bottom: 4px;
+}
+
 .param-row {
   display: grid;
-  grid-template-columns: minmax(0, 1.1fr) minmax(0, 1.4fr) auto;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.5fr) auto;
   gap: 6px;
   align-items: center;
 }
@@ -197,6 +273,25 @@ button.small {
   margin: 0;
   font-size: 0.8rem;
   color: var(--text-muted);
+}
+
+.param-desc {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 200px;
+}
+
+.param-desc:hover {
+  white-space: normal;
+  overflow: visible;
+  background: var(--card-alt);
+  padding: 2px 4px;
+  border-radius: 4px;
+  z-index: 10;
+  position: relative;
 }
 
 #requestJson {
@@ -256,7 +351,7 @@ button.small {
   background: var(--code-bg);
   padding: 10px;
   min-height: 180px;
-  max-height: 420px;
+  max-height: 60vh;
   overflow: auto;
   font-size: 0.8rem;
   font-family: monospace;
@@ -280,9 +375,36 @@ button.small {
   margin-bottom: 6px;
 }
 
+.config-toolbar {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 8px;
+  align-items: center;
+}
+
+.config-toolbar select {
+  flex: 1;
+}
+
+.config-save-row {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 8px;
+  align-items: center;
+}
+
+.config-save-row input {
+  flex: 1;
+}
+
+.config-io-row {
+  display: flex;
+  gap: 6px;
+}
+
 #historyList {
   list-style: none;
-  max-height: 220px;
+  max-height: 35vh;
   overflow: auto;
   font-size: 0.8rem;
 }
@@ -347,9 +469,97 @@ button.small {
   border-color: var(--success);
 }
 
+.toast.warning {
+  border-color: #f59e0b;
+}
+
 @media (max-width: 1024px) {
   .app {
     grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 768px) {
+  .app {
+    padding: 8px;
+    gap: 8px;
+  }
+
+  h1 {
+    font-size: 1rem;
+  }
+
+  h2 {
+    font-size: 0.9rem;
+  }
+
+  .card {
+    padding: 10px;
+    margin-bottom: 8px;
+  }
+
+  .param-row {
+    grid-template-columns: 1fr;
+    gap: 4px;
+  }
+
+  .param-row label {
+    font-size: 0.75rem;
+  }
+
+  .param-desc {
+    max-width: 100%;
+    font-size: 0.7rem;
+  }
+
+  #headersContainer > div {
+    grid-template-columns: 1fr;
+    gap: 4px;
+  }
+
+  .config-toolbar,
+  .config-save-row,
+  .config-io-row,
+  .history-toolbar {
+    flex-wrap: wrap;
+  }
+
+  .actions {
+    flex-wrap: wrap;
+  }
+
+  .response-container {
+    max-height: 50vh;
+  }
+
+  #historyList {
+    max-height: 30vh;
+  }
+}
+
+@media (max-width: 480px) {
+  body {
+    font-size: 0.9rem;
+  }
+
+  input, select, textarea {
+    font-size: 0.8rem;
+    padding: 5px 6px;
+  }
+
+  button {
+    font-size: 0.8rem;
+    padding: 5px 8px;
+  }
+
+  .tab {
+    font-size: 0.75rem;
+    padding: 3px 8px;
+  }
+
+  .status-line {
+    font-size: 0.8rem;
+    gap: 10px;
   }
 }
 
