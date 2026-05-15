@@ -30,7 +30,7 @@ body {
   display: grid;
   grid-template-columns: minmax(0, 1.1fr) minmax(0, 1.4fr);
   gap: 12px;
-  padding: 12px;
+  padding: max(12px, env(safe-area-inset-top)) max(12px, env(safe-area-inset-right)) max(12px, env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left));
   max-width: 1920px;
   margin: 0 auto;
   min-height: 100vh;
@@ -75,9 +75,9 @@ input, select, textarea {
   font-size: 0.85rem;
 }
 
-input:focus, select:focus, textarea:focus {
-  outline: none;
+input:focus-visible, select:focus-visible, textarea:focus-visible {
   border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.4);
 }
 
 button {
@@ -89,6 +89,13 @@ button {
   cursor: pointer;
   font-size: 0.85rem;
   margin-top: 6px;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+
+button:focus-visible {
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.4);
+  outline: none;
 }
 
 button:disabled {
@@ -134,6 +141,17 @@ button.small {
   color: var(--text-muted);
   cursor: pointer;
   font-size: 0.8rem;
+  touch-action: manipulation;
+}
+
+.tab:hover {
+  background: var(--border);
+  color: var(--text);
+}
+
+.tab:focus-visible {
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.4);
+  outline: none;
 }
 
 .tab.active {
@@ -206,6 +224,7 @@ button.small {
 #requestTime {
   font-size: 0.8rem;
   color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
 }
 
 .response-area {
@@ -223,6 +242,7 @@ button.small {
   gap: 16px;
   font-size: 0.85rem;
   margin-bottom: 8px;
+  font-variant-numeric: tabular-nums;
 }
 
 .response-container {
@@ -267,10 +287,17 @@ button.small {
   border: 1px solid var(--border);
   margin-bottom: 6px;
   cursor: pointer;
+  touch-action: manipulation;
 }
 
-#historyList li:hover {
+#historyList li:hover,
+#historyList li:focus-visible {
   background: rgba(59, 130, 246, 0.1);
+  outline: none;
+}
+
+#historyList li:focus-visible {
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.4);
 }
 
 #historyList .history-meta {
@@ -294,6 +321,7 @@ button.small {
   display: flex;
   flex-direction: column;
   gap: 8px;
+  overscroll-behavior: contain;
 }
 
 .toast {
@@ -317,4 +345,85 @@ button.small {
   .app {
     grid-template-columns: 1fr;
   }
+}
+
+.skip-link {
+  position: absolute;
+  top: -40px;
+  left: 0;
+  background: var(--accent);
+  color: #fff;
+  padding: 8px 16px;
+  z-index: 100;
+  font-size: 0.85rem;
+  border-radius: 0 0 6px 0;
+  text-decoration: none;
+}
+
+.skip-link:focus {
+  top: 0;
+}
+
+.spinner {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  border: 2px solid rgba(255,255,255,0.3);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: spin 0.6s linear infinite;
+  vertical-align: middle;
+  margin-right: 6px;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .spinner {
+    animation: none;
+  }
+  *, *::before, *::after {
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+  }
+}
+
+.empty-state {
+  text-align: center;
+  color: var(--text-muted);
+  padding: 24px 12px;
+  font-size: 0.85rem;
+}
+
+.confirm-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 2000;
+}
+
+.confirm-dialog {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 20px;
+  max-width: 360px;
+  width: 90%;
+  text-align: center;
+}
+
+.confirm-dialog p {
+  margin-bottom: 16px;
+  font-size: 0.9rem;
+}
+
+.confirm-dialog .confirm-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: center;
 }

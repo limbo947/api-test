@@ -1,11 +1,13 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="zh-CN" style="color-scheme: dark">
 <head>
   <meta charset="UTF-8">
+  <meta name="theme-color" content="#0f172a">
   <title>OpenAI API Debugger (兼容 Chat Completions / Responses)</title>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
+  <a href="#main-content" class="skip-link">跳到主内容</a>
   <div class="app">
     <!-- 左侧配置区 -->
     <aside class="config">
@@ -14,13 +16,13 @@
       <section class="card endpoint-section">
         <h2>端点配置</h2>
         <label for="baseUrl">Base URL</label>
-        <input id="baseUrl" type="text" placeholder="https://api.openai.com/v1">
+        <input id="baseUrl" type="url" autocomplete="url" placeholder="https://api.openai.com/v1…">
 
         <label for="endpointPath">端点路径</label>
-        <input id="endpointPath" type="text" placeholder="/chat/completions 或 /responses">
+        <input id="endpointPath" type="text" autocomplete="off" placeholder="/chat/completions 或 /responses…">
 
         <label for="httpMethod">HTTP 方法</label>
-        <select id="httpMethod">
+        <select id="httpMethod" autocomplete="off">
           <option value="POST" selected>POST</option>
           <option value="GET">GET</option>
         </select>
@@ -53,7 +55,7 @@
 
       <section class="card json-mode" id="jsonMode" style="display:none;">
         <h2>请求体（JSON）</h2>
-        <textarea id="requestJson" spellcheck="false"></textarea>
+        <textarea id="requestJson" spellcheck="false" aria-label="请求体 JSON" autocomplete="off"></textarea>
         <div class="json-actions">
           <button type="button" id="formatJsonBtn">格式化</button>
           <button type="button" id="parseJsonBtn">解析 JSON 到表单</button>
@@ -69,7 +71,7 @@
     </aside>
 
     <!-- 右侧响应/历史区 -->
-    <main class="response-area">
+    <main class="response-area" id="main-content">
       <section class="card response-card">
         <h2>响应</h2>
         <div class="status-line">
@@ -80,13 +82,13 @@
           <button class="tab active" data-view="pretty">智能预览</button>
           <button class="tab" data-view="raw">原始文本</button>
         </div>
-        <div id="responseContainer" class="response-container"></div>
+        <div id="responseContainer" class="response-container" aria-live="polite"></div>
       </section>
 
       <section class="card history-card">
         <h2>历史记录</h2>
         <div class="history-toolbar">
-          <button type="button" id="clearHistoryBtn">清空历史</button>
+          <button type="button" id="clearHistoryBtn" class="danger">清空历史</button>
           <button type="button" id="exportHistoryBtn">导出历史 (JSON)</button>
         </div>
         <ul id="historyList"></ul>
@@ -94,7 +96,7 @@
     </main>
   </div>
 
-  <div id="toastContainer"></div>
+  <div id="toastContainer" aria-live="polite"></div>
 
   <script src="config.js"></script>
   <script src="app.js"></script>
