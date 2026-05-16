@@ -3,38 +3,91 @@
 <head>
   <meta charset="UTF-8">
   <meta name="theme-color" content="#0f172a">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src *; img-src 'self' data: blob:; media-src 'self' blob:; font-src 'self'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; connect-src 'self' https: wss:; img-src 'self' data: blob:; media-src 'self' blob:; font-src 'self' https://fonts.gstatic.com">
   <title>OpenAI API Debugger (兼容 Chat Completions / Responses)</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
+  <div class="grid-overlay"></div>
   <a href="#main-content" class="skip-link">跳到主内容</a>
+
+  <!-- 左侧边栏 -->
+  <nav class="sidebar" aria-label="侧边导航">
+    <div class="sidebar-brand">
+      <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M12 2L2 7l10 5 10-5-10-5z"/>
+        <path d="M2 17l10 5 10-5"/>
+        <path d="M2 12l10 5 10-5"/>
+      </svg>
+      <span>API 调试器</span>
+    </div>
+
+    <div class="sidebar-section">
+      <div class="sidebar-section-title">工作区</div>
+      <a href="#" class="sidebar-item active" data-panel="config">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/>
+        </svg>
+        <span>请求配置</span>
+      </a>
+    </div>
+
+    <div class="sidebar-section">
+      <div class="sidebar-section-title">管理</div>
+      <div class="sidebar-item-wrap">
+        <a href="#" class="sidebar-item" data-panel="saved-configs">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/>
+            <polyline points="17 21 17 13 7 13 7 21"/>
+            <polyline points="7 3 7 8 15 8"/>
+          </svg>
+          <span>配置方案</span>
+        </a>
+        <button type="button" class="sidebar-expand" id="configExpandBtn" aria-label="展开配置方案" title="展开">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="6 9 12 15 18 9"/>
+          </svg>
+        </button>
+      </div>
+      <div class="sidebar-submenu" id="configSubmenu">
+        <div class="sidebar-submenu-list" id="configSubmenuList"></div>
+        <div class="sidebar-submenu-actions">
+          <input type="text" id="quickConfigName" placeholder="新配置名称…" autocomplete="off" spellcheck="false">
+          <button type="button" id="quickSaveConfigBtn">保存当前配置</button>
+        </div>
+      </div>
+      <a href="#" class="sidebar-item" data-panel="history">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="10"/>
+          <polyline points="12 6 12 12 16 14"/>
+        </svg>
+        <span>历史记录</span>
+      </a>
+    </div>
+  </nav>
+
   <div class="app">
     <!-- 左侧配置区 -->
     <aside class="config">
       <h1>OpenAI API 调试器</h1>
 
-      <section class="card mode-switch">
-        <h2>编辑模式</h2>
-        <div class="tab-bar">
-          <button class="tab active" data-mode="form">表单模式</button>
-          <button class="tab" data-mode="json">JSON 模式</button>
-        </div>
-      </section>
-
       <section class="card form-mode" id="formMode">
         <h2>端点配置</h2>
-        <label for="baseUrl">Base URL</label>
-        <div class="input-row">
-          <input id="baseUrl" type="url" autocomplete="url" placeholder="https://api.openai.com/v1…">
+        <label>请求地址</label>
+        <div class="url-combo-row">
+          <div class="url-combo">
+            <input id="baseUrl" type="url" autocomplete="url" placeholder="https://api.openai.com/v1…">
+            <div class="endpoint-path-combo">
+              <select id="endpointPathSelect" autocomplete="off"></select>
+              <input id="endpointPath" type="text" autocomplete="off" placeholder="/custom/path…">
+            </div>
+          </div>
           <button type="button" id="fetchModelsBtn" class="small" title="从 /models 端点获取模型列表">获取模型</button>
         </div>
         <div id="modelFetchStatus" class="fetch-status"></div>
-
-        <label for="endpointPath">端点路径</label>
-        <select id="endpointPathSelect" autocomplete="off">
-        </select>
-        <input id="endpointPath" type="text" autocomplete="off" placeholder="/chat/completions 或 /responses…" style="margin-top: 0.5rem;">
 
         <label for="httpMethod">HTTP 方法</label>
         <select id="httpMethod" autocomplete="off">
@@ -63,36 +116,6 @@
         <button type="button" id="addParamBtn">+ 添加自定义参数</button>
       </section>
 
-      <section class="card json-mode" id="jsonMode" style="display:none;">
-        <h2>完整配置（JSON）</h2>
-        <textarea id="requestJson" spellcheck="false" aria-label="完整配置 JSON" autocomplete="off"></textarea>
-        <div class="json-actions">
-          <button type="button" id="formatJsonBtn">格式化</button>
-          <button type="button" id="parseJsonBtn">解析 JSON 到表单</button>
-        </div>
-        <div id="jsonError" class="error-text"></div>
-      </section>
-
-      <section class="card config-manager">
-        <h2>配置方案</h2>
-        <div class="config-toolbar">
-          <select id="configSelect" autocomplete="off">
-            <option value="">-- 选择已保存的配置 --</option>
-          </select>
-          <button type="button" id="loadConfigBtn">加载</button>
-          <button type="button" id="deleteConfigBtn" class="danger">删除</button>
-        </div>
-        <div class="config-save-row">
-          <input type="text" id="configNameInput" placeholder="配置名称…" autocomplete="off" spellcheck="false">
-          <button type="button" id="saveConfigBtn">保存配置</button>
-        </div>
-        <div class="config-io-row">
-          <button type="button" id="exportConfigBtn">导出配置 (JSON)</button>
-          <button type="button" id="importConfigBtn">导入配置</button>
-          <input type="file" id="importConfigFile" accept=".json" style="display:none;">
-        </div>
-      </section>
-
       <section class="card actions">
         <button type="button" id="sendBtn">发送请求</button>
         <button type="button" id="abortBtn" disabled>中止请求</button>
@@ -103,6 +126,16 @@
 
     <!-- 右侧响应/历史区 -->
     <main class="response-area" id="main-content">
+      <section class="card" id="jsonMode">
+        <h2>完整配置（JSON）</h2>
+        <textarea id="requestJson" spellcheck="false" aria-label="完整配置 JSON" autocomplete="off"></textarea>
+        <div class="json-actions">
+          <button type="button" id="formatJsonBtn">格式化</button>
+          <button type="button" id="parseJsonBtn">应用 JSON 到表单</button>
+        </div>
+        <div id="jsonError" class="error-text"></div>
+      </section>
+
       <section class="card response-card">
         <h2>响应</h2>
         <div class="status-line">
@@ -115,17 +148,62 @@
         </div>
         <div id="responseContainer" class="response-container" aria-live="polite"></div>
       </section>
-
-      <section class="card history-card">
-        <h2>历史记录</h2>
-        <div class="history-toolbar">
-          <button type="button" id="clearHistoryBtn" class="danger">清空历史</button>
-          <button type="button" id="exportHistoryBtn">导出历史 (JSON)</button>
-        </div>
-        <ul id="historyList"></ul>
-      </section>
     </main>
   </div>
+
+  <!-- 浮动面板：配置方案 -->
+  <div class="side-panel" id="savedConfigsPanel" aria-hidden="true">
+    <div class="side-panel-header">
+      <h3>配置方案</h3>
+      <button type="button" class="side-panel-close" aria-label="关闭面板">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <line x1="18" y1="6" x2="6" y2="18"/>
+          <line x1="6" y1="6" x2="18" y2="18"/>
+        </svg>
+      </button>
+    </div>
+    <div class="side-panel-body">
+      <div class="config-toolbar">
+        <select id="configSelect" autocomplete="off">
+          <option value="">-- 选择已保存的配置 --</option>
+        </select>
+        <button type="button" id="loadConfigBtn">加载</button>
+        <button type="button" id="deleteConfigBtn" class="danger">删除</button>
+      </div>
+      <div class="config-save-row">
+        <input type="text" id="configNameInput" placeholder="配置名称…" autocomplete="off" spellcheck="false">
+        <button type="button" id="saveConfigBtn">保存配置</button>
+      </div>
+      <div class="config-io-row">
+        <button type="button" id="exportConfigBtn">导出配置 (JSON)</button>
+        <button type="button" id="importConfigBtn">导入配置</button>
+        <input type="file" id="importConfigFile" accept=".json" style="display:none;">
+      </div>
+    </div>
+  </div>
+
+  <!-- 浮动面板：历史记录 -->
+  <div class="side-panel" id="historyPanel" aria-hidden="true">
+    <div class="side-panel-header">
+      <h3>历史记录</h3>
+      <button type="button" class="side-panel-close" aria-label="关闭面板">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <line x1="18" y1="6" x2="6" y2="18"/>
+          <line x1="6" y1="6" x2="18" y2="18"/>
+        </svg>
+      </button>
+    </div>
+    <div class="side-panel-body">
+      <div class="history-toolbar">
+        <button type="button" id="clearHistoryBtn" class="danger">清空历史</button>
+        <button type="button" id="exportHistoryBtn">导出历史 (JSON)</button>
+      </div>
+      <ul id="historyList"></ul>
+    </div>
+  </div>
+
+  <!-- 面板遮罩 -->
+  <div class="panel-overlay" id="panelOverlay"></div>
 
   <div id="toastContainer" aria-live="polite"></div>
 
@@ -133,7 +211,14 @@
     <div>
       <input type="text" class="header-key" aria-label="请求头名称" spellcheck="false" autocomplete="off">
       <input type="text" class="header-value" aria-label="请求头值" spellcheck="false" autocomplete="off">
-      <button type="button" class="danger small" aria-label="删除请求头">删除</button>
+      <button type="button" class="icon-btn danger" aria-label="删除请求头" title="删除">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <polyline points="3 6 5 6 21 6"/>
+          <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+          <line x1="10" y1="11" x2="10" y2="17"/>
+          <line x1="14" y1="11" x2="14" y2="17"/>
+        </svg>
+      </button>
     </div>
   </template>
 
@@ -147,7 +232,14 @@
           <option value="assistant">assistant</option>
           <option value="tool">tool</option>
         </select>
-        <button type="button" class="danger small" aria-label="删除消息">删除</button>
+        <button type="button" class="icon-btn danger" aria-label="删除消息" title="删除">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="3 6 5 6 21 6"/>
+            <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+            <line x1="10" y1="11" x2="10" y2="17"/>
+            <line x1="14" y1="11" x2="14" y2="17"/>
+          </svg>
+        </button>
       </div>
       <div class="param-row">
         <label for="">content</label>

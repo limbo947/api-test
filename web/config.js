@@ -2,24 +2,32 @@
 ;(function () {
   'use strict';
 
-  const SENSITIVE_HEADER_KEYS = new Set([
+  var SENSITIVE_HEADER_KEYS = new Set([
     'authorization', 'api-key', 'x-api-key',
     'cookie', 'set-cookie', 'proxy-authorization'
   ]);
 
-  const DEFAULT_BASE_URL = 'https://api.openai.com/v1';
-  const DEFAULT_ENDPOINT = '/chat/completions';
+  var DEFAULT_BASE_URL = 'https://api.openai.com/v1';
+  var DEFAULT_ENDPOINT = '';
+  var PLACEHOLDER_API_KEY = 'YOUR_API_KEY';
 
-  const DEFAULT_HEADERS = [
-    { key: 'Authorization', value: 'Bearer YOUR_API_KEY' },
+  var DEFAULT_HEADERS = [
+    { key: 'Authorization', value: 'Bearer ' + PLACEHOLDER_API_KEY },
     { key: 'Content-Type', value: 'application/json' }
   ];
 
-  const ENDPOINT_TEMPLATES = {
+  var MAX_HISTORY_ITEMS = 20;
+  var FETCH_MODELS_TIMEOUT_MS = 10000;
+  var TOAST_DISPLAY_MS = 3000;
+  var JSON_SYNC_DELAY_MS = 500;
+  var JSON_PREVIEW_DELAY_MS = 300;
+  var FETCH_MODELS_DEBOUNCE_MS = 1500;
+
+  var ENDPOINT_TEMPLATES = {
     '/chat/completions': {
       params: [
         { name: 'model', type: 'text', placeholder: '模型 ID，如 gpt-4o、o3-mini', description: '使用的模型 ID', datalist: 'modelDatalist' },
-        { name: 'stream', type: 'checkbox', default: false, description: '是否启用流式响应（Server-Sent Events）' }
+        { name: 'stream', type: 'select', options: [true, false], default: false, placeholder: '是否流式', description: '是否启用流式响应（Server-Sent Events）' }
       ],
       body: {
         model: '',
@@ -34,7 +42,7 @@
     '/responses': {
       params: [
         { name: 'model', type: 'text', placeholder: '模型 ID，如 gpt-4o、o3-mini', description: '使用的模型 ID', datalist: 'modelDatalist' },
-        { name: 'stream', type: 'checkbox', default: false, description: '是否启用流式响应（Server-Sent Events）' }
+        { name: 'stream', type: 'select', options: [true, false], default: false, placeholder: '是否流式', description: '是否启用流式响应（Server-Sent Events）' }
       ],
       body: {
         model: '',
@@ -99,21 +107,21 @@
   };
 
   function getEndpointParams(endpointPath) {
-    const template = ENDPOINT_TEMPLATES[endpointPath];
+    var template = ENDPOINT_TEMPLATES[endpointPath];
     return template ? template.params : ENDPOINT_TEMPLATES['/chat/completions'].params;
   }
 
   function getEndpointDefaultBody(endpointPath) {
-    const template = ENDPOINT_TEMPLATES[endpointPath];
+    var template = ENDPOINT_TEMPLATES[endpointPath];
     return template ? deepClone(template.body) : deepClone(ENDPOINT_TEMPLATES['/chat/completions'].body);
   }
 
   function endpointHasMessages(endpointPath) {
-    const template = ENDPOINT_TEMPLATES[endpointPath];
+    var template = ENDPOINT_TEMPLATES[endpointPath];
     return template ? template.hasMessages : true;
   }
 
-  const CUSTOM_PARAM_PRESETS = [
+  var CUSTOM_PARAM_PRESETS = [
     { key: 'temperature', value: '1.0', description: '控制输出随机性，范围 0.0-2.0（建议与 top_p 二选一）' },
     { key: 'max_completion_tokens', value: '4096', description: '生成的最大 token 数（推荐，替代已弃用的 max_tokens）' },
     { key: 'max_tokens', value: '4096', description: '生成的最大 token 数（已弃用，请优先使用 max_completion_tokens）' },
@@ -159,7 +167,7 @@
     if (!paramDef) return { valid: true };
 
     if (paramDef.type === 'number') {
-      const num = parseFloat(value);
+      var num = parseFloat(value);
       if (isNaN(num)) {
         return { valid: false, error: paramName + ' 必须是数字' };
       }
@@ -182,33 +190,96 @@
     return SENSITIVE_HEADER_KEYS.has(key.toLowerCase());
   }
 
+  function isPlaceholderApiKey(value) {
+    if (!value) return false;
+    return value === PLACEHOLDER_API_KEY ||
+           value === 'Bearer ' + PLACEHOLDER_API_KEY ||
+           value.indexOf(PLACEHOLDER_API_KEY) !== -1;
+  }
+
+  function maskSensitiveValue(key, value) {
+    if (!isSensitiveHeader(key) || !value) return value;
+    var spaceIdx = value.indexOf(' ');
+    if (spaceIdx > 0) {
+      var prefix = value.substring(0, spaceIdx + 1);
+      var secret = value.substring(spaceIdx + 1);
+      if (secret.length <= 8) return prefix + '****';
+      return prefix + secret.substring(0, 4) + '****' + secret.substring(secret.length - 4);
+    }
+    if (value.length <= 8) return '****';
+    return value.substring(0, 4) + '****' + value.substring(value.length - 4);
+  }
+
+  var _obfuscationKey = 'oai_dbg_' + (Date.now() % 100000).toString(36);
+
+  function obfuscateValue(str) {
+    if (typeof str !== 'string') return str;
+    try {
+      var encoded = btoa(unescape(encodeURIComponent(str)));
+      var result = '';
+      for (var i = 0; i < encoded.length; i++) {
+        result += String.fromCharCode(encoded.charCodeAt(i) ^ _obfuscationKey.charCodeAt(i % _obfuscationKey.length));
+      }
+      return 'enc:' + result;
+    } catch (e) {
+      return str;
+    }
+  }
+
+  function deobfuscateValue(str) {
+    if (typeof str !== 'string' || str.indexOf('enc:') !== 0) return str;
+    try {
+      var encoded = str.substring(4);
+      var decoded = '';
+      for (var i = 0; i < encoded.length; i++) {
+        decoded += String.fromCharCode(encoded.charCodeAt(i) ^ _obfuscationKey.charCodeAt(i % _obfuscationKey.length));
+      }
+      return decodeURIComponent(escape(atob(decoded)));
+    } catch (e) {
+      return str;
+    }
+  }
+
+  function obfuscateSensitiveHeaders(headers) {
+    if (!Array.isArray(headers)) return headers;
+    return headers.map(function (h) {
+      if (isSensitiveHeader(h.key)) {
+        return { key: h.key, value: obfuscateValue(h.value) };
+      }
+      return { key: h.key, value: h.value };
+    });
+  }
+
+  function deobfuscateSensitiveHeaders(headers) {
+    if (!Array.isArray(headers)) return headers;
+    return headers.map(function (h) {
+      if (isSensitiveHeader(h.key)) {
+        return { key: h.key, value: deobfuscateValue(h.value) };
+      }
+      return { key: h.key, value: h.value };
+    });
+  }
+
   function createDefaultConfig() {
     return {
       baseUrl: DEFAULT_BASE_URL,
       endpointPath: DEFAULT_ENDPOINT,
       httpMethod: 'POST',
-      headers: DEFAULT_HEADERS.map(h => ({ ...h })),
-      body: {
-        model: '',
-        messages: [
-          { role: 'system', content: '你是一个有帮助的助手。' },
-          { role: 'user', content: '' }
-        ],
-        temperature: 1.0,
-        max_tokens: 4096,
-        top_p: 1.0,
-        presence_penalty: 0.0,
-        frequency_penalty: 0.0,
-        stream: false
-      },
-      customParams: [],
-      jsonMode: false
+      headers: DEFAULT_HEADERS.map(function (h) { return { key: h.key, value: h.value }; }),
+      body: deepClone(ENDPOINT_TEMPLATES['/chat/completions'].body),
+      customParams: [
+        { key: 'temperature', value: '1.0' },
+        { key: 'max_completion_tokens', value: '4096' },
+        { key: 'top_p', value: '1.0' },
+        { key: 'presence_penalty', value: '0.0' },
+        { key: 'frequency_penalty', value: '0.0' }
+      ]
     };
   }
 
   function isLocalStorageAvailable() {
     try {
-      const testKey = '__storage_test__';
+      var testKey = '__storage_test__';
       localStorage.setItem(testKey, '1');
       localStorage.removeItem(testKey);
       return true;
@@ -219,7 +290,7 @@
 
   function safeGetLocalStorage(key) {
     try {
-      const raw = localStorage.getItem(key);
+      var raw = localStorage.getItem(key);
       if (!raw || raw.trim() === '') return null;
       return JSON.parse(raw);
     } catch (e) {
@@ -238,8 +309,8 @@
     }
   }
 
-  const CONFIG_STORAGE_KEY = 'openai_debugger_saved_configs';
-  const HISTORY_STORAGE_KEY = 'openai_debugger_history';
+  var CONFIG_STORAGE_KEY = 'openai_debugger_saved_configs';
+  var HISTORY_STORAGE_KEY = 'openai_debugger_history';
 
   function loadHistory() {
     return safeGetLocalStorage(HISTORY_STORAGE_KEY) || [];
@@ -254,11 +325,24 @@
   }
 
   function loadSavedConfigs() {
-    return safeGetLocalStorage(CONFIG_STORAGE_KEY) || [];
+    var configs = safeGetLocalStorage(CONFIG_STORAGE_KEY) || [];
+    return configs.map(function (cfg) {
+      if (cfg.headers && Array.isArray(cfg.headers)) {
+        cfg.headers = deobfuscateSensitiveHeaders(cfg.headers);
+      }
+      return cfg;
+    });
   }
 
   function saveSavedConfigs(configs) {
-    if (!safeSetLocalStorage(CONFIG_STORAGE_KEY, configs)) {
+    var toSave = configs.map(function (cfg) {
+      var cloned = deepClone(cfg);
+      if (cloned.headers && Array.isArray(cloned.headers)) {
+        cloned.headers = obfuscateSensitiveHeaders(cloned.headers);
+      }
+      return cloned;
+    });
+    if (!safeSetLocalStorage(CONFIG_STORAGE_KEY, toSave)) {
       if (typeof showToast === 'function') {
         showToast('保存配置失败：浏览器存储不可用', 'error');
       }
@@ -266,13 +350,16 @@
   }
 
   function saveConfig(name, configData) {
-    const configs = loadSavedConfigs();
-    const existingIndex = configs.findIndex(c => c.name === name);
-    const configToSave = {
-      name,
-      ...deepClone(configData),
-      savedAt: new Date().toISOString()
+    var configs = loadSavedConfigs();
+    var existingIndex = configs.findIndex(function (c) { return c.name === name; });
+    var configToSave = {
+      name: name
     };
+    Object.keys(configData).forEach(function (k) {
+      configToSave[k] = deepClone(configData[k]);
+    });
+    configToSave.name = name;
+    configToSave.savedAt = new Date().toISOString();
     if (existingIndex >= 0) {
       configs[existingIndex] = configToSave;
     } else {
@@ -283,14 +370,14 @@
   }
 
   function deleteConfig(name) {
-    const configs = loadSavedConfigs();
-    const filtered = configs.filter(c => c.name !== name);
+    var configs = loadSavedConfigs();
+    var filtered = configs.filter(function (c) { return c.name !== name; });
     saveSavedConfigs(filtered);
   }
 
   function getConfigByName(name) {
-    const configs = loadSavedConfigs();
-    return configs.find(c => c.name === name);
+    var configs = loadSavedConfigs();
+    return configs.find(function (c) { return c.name === name; });
   }
 
   function deepClone(obj) {
@@ -298,14 +385,14 @@
       try {
         return structuredClone(obj);
       } catch (e) {
-        // structuredClone 失败时回退（如包含函数或 DOM 节点）
+        // structuredClone 失败时回退
       }
     }
     return JSON.parse(JSON.stringify(obj));
   }
 
   function buildEndpointSelectOptions() {
-    const endpointLabels = {
+    var endpointLabels = {
       '/chat/completions': '/chat/completions (聊天补全)',
       '/responses': '/responses (统一响应)',
       '/embeddings': '/embeddings (文本嵌入)',
@@ -316,35 +403,78 @@
       '/models': '/models (列出模型)'
     };
 
-    let html = '<option value="" selected>-- 选择预设端点 --</option>';
-    Object.keys(ENDPOINT_TEMPLATES).forEach(path => {
-      const label = endpointLabels[path] || path;
+    var html = '<option value="" selected>-- 选择预设端点 --</option>';
+    Object.keys(ENDPOINT_TEMPLATES).forEach(function (path) {
+      var label = endpointLabels[path] || path;
       html += '<option value="' + path + '">' + label + '</option>';
     });
     html += '<option value="custom">自定义路径...</option>';
     return html;
   }
 
-  // 导出仅需的内容到全局作用域
-  window.ENDPOINT_TEMPLATES = ENDPOINT_TEMPLATES;
-  window.CUSTOM_PARAM_PRESETS = CUSTOM_PARAM_PRESETS;
-  window.SENSITIVE_HEADER_KEYS = SENSITIVE_HEADER_KEYS;
-  window.getEndpointParams = getEndpointParams;
-  window.getEndpointDefaultBody = getEndpointDefaultBody;
-  window.endpointHasMessages = endpointHasMessages;
-  window.isSensitiveHeader = isSensitiveHeader;
-  window.validateParamValue = validateParamValue;
-  window.createDefaultConfig = createDefaultConfig;
-  window.isLocalStorageAvailable = isLocalStorageAvailable;
-  window.safeGetLocalStorage = safeGetLocalStorage;
-  window.safeSetLocalStorage = safeSetLocalStorage;
-  window.loadHistory = loadHistory;
-  window.saveHistory = saveHistory;
-  window.loadSavedConfigs = loadSavedConfigs;
-  window.saveSavedConfigs = saveSavedConfigs;
-  window.saveConfig = saveConfig;
-  window.deleteConfig = deleteConfig;
-  window.getConfigByName = getConfigByName;
-  window.deepClone = deepClone;
-  window.buildEndpointSelectOptions = buildEndpointSelectOptions;
+  function extractPresetParamsFromBody(body, endpointPath, existingCustomParams) {
+    if (!body || typeof body !== 'object') return { body: body, customParams: existingCustomParams || [] };
+
+    var presetKeys = {};
+    CUSTOM_PARAM_PRESETS.forEach(function (p) { presetKeys[p.key] = p; });
+
+    var endpointParamNames = {};
+    getEndpointParams(endpointPath).forEach(function (p) { endpointParamNames[p.name] = true; });
+
+    var reservedKeys = { model: true, messages: true, stream: true, input: true };
+    Object.keys(ENDPOINT_TEMPLATES).forEach(function (ep) {
+      var tpl = ENDPOINT_TEMPLATES[ep];
+      if (tpl.body) Object.keys(tpl.body).forEach(function (k) { reservedKeys[k] = true; });
+    });
+
+    var existingKeys = {};
+    (existingCustomParams || []).forEach(function (p) { existingKeys[p.key] = true; });
+
+    var newCustomParams = (existingCustomParams || []).slice();
+    var newBody = deepClone(body);
+
+    Object.keys(body).forEach(function (key) {
+      if (reservedKeys[key] || endpointParamNames[key] || existingKeys[key]) return;
+      if (presetKeys[key]) {
+        newCustomParams.push({ key: key, value: body[key] });
+        delete newBody[key];
+      }
+    });
+
+    return { body: newBody, customParams: newCustomParams };
+  }
+
+  window.AppConfig = {
+    ENDPOINT_TEMPLATES: ENDPOINT_TEMPLATES,
+    CUSTOM_PARAM_PRESETS: CUSTOM_PARAM_PRESETS,
+    SENSITIVE_HEADER_KEYS: SENSITIVE_HEADER_KEYS,
+    PLACEHOLDER_API_KEY: PLACEHOLDER_API_KEY,
+    MAX_HISTORY_ITEMS: MAX_HISTORY_ITEMS,
+    FETCH_MODELS_TIMEOUT_MS: FETCH_MODELS_TIMEOUT_MS,
+    TOAST_DISPLAY_MS: TOAST_DISPLAY_MS,
+    JSON_SYNC_DELAY_MS: JSON_SYNC_DELAY_MS,
+    JSON_PREVIEW_DELAY_MS: JSON_PREVIEW_DELAY_MS,
+    FETCH_MODELS_DEBOUNCE_MS: FETCH_MODELS_DEBOUNCE_MS,
+    getEndpointParams: getEndpointParams,
+    getEndpointDefaultBody: getEndpointDefaultBody,
+    endpointHasMessages: endpointHasMessages,
+    isSensitiveHeader: isSensitiveHeader,
+    isPlaceholderApiKey: isPlaceholderApiKey,
+    maskSensitiveValue: maskSensitiveValue,
+    validateParamValue: validateParamValue,
+    createDefaultConfig: createDefaultConfig,
+    isLocalStorageAvailable: isLocalStorageAvailable,
+    safeGetLocalStorage: safeGetLocalStorage,
+    safeSetLocalStorage: safeSetLocalStorage,
+    loadHistory: loadHistory,
+    saveHistory: saveHistory,
+    loadSavedConfigs: loadSavedConfigs,
+    saveSavedConfigs: saveSavedConfigs,
+    saveConfig: saveConfig,
+    deleteConfig: deleteConfig,
+    getConfigByName: getConfigByName,
+    deepClone: deepClone,
+    buildEndpointSelectOptions: buildEndpointSelectOptions,
+    extractPresetParamsFromBody: extractPresetParamsFromBody
+  };
 })();
