@@ -301,11 +301,13 @@ body::after {
   display: flex;
   gap: 2px;
   opacity: 0;
-  transition: opacity var(--transition);
+  visibility: hidden;
+  transition: opacity var(--transition), visibility var(--transition);
 }
 
 .sidebar-config-item:hover .config-actions {
   opacity: 1;
+  visibility: visible;
 }
 
 .sidebar-config-item .config-actions button {
@@ -1075,6 +1077,11 @@ button.small {
   background: rgba(255, 107, 107, 0.06);
   border-radius: 8px;
   border-left: 3px solid var(--danger);
+  display: none;
+}
+
+.error-text:not(:empty) {
+  display: block;
 }
 
 .actions {

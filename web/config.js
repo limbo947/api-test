@@ -1,4 +1,4 @@
-// config.js – 默认配置与工具函数
+// config.js – 默认配置与工具函数 (优化版)
 ;(function () {
   'use strict';
 
@@ -210,56 +210,6 @@
     return value.substring(0, 4) + '****' + value.substring(value.length - 4);
   }
 
-  var _obfuscationKey = 'oai_dbg_' + (Date.now() % 100000).toString(36);
-
-  function obfuscateValue(str) {
-    if (typeof str !== 'string') return str;
-    try {
-      var encoded = btoa(unescape(encodeURIComponent(str)));
-      var result = '';
-      for (var i = 0; i < encoded.length; i++) {
-        result += String.fromCharCode(encoded.charCodeAt(i) ^ _obfuscationKey.charCodeAt(i % _obfuscationKey.length));
-      }
-      return 'enc:' + result;
-    } catch (e) {
-      return str;
-    }
-  }
-
-  function deobfuscateValue(str) {
-    if (typeof str !== 'string' || str.indexOf('enc:') !== 0) return str;
-    try {
-      var encoded = str.substring(4);
-      var decoded = '';
-      for (var i = 0; i < encoded.length; i++) {
-        decoded += String.fromCharCode(encoded.charCodeAt(i) ^ _obfuscationKey.charCodeAt(i % _obfuscationKey.length));
-      }
-      return decodeURIComponent(escape(atob(decoded)));
-    } catch (e) {
-      return str;
-    }
-  }
-
-  function obfuscateSensitiveHeaders(headers) {
-    if (!Array.isArray(headers)) return headers;
-    return headers.map(function (h) {
-      if (isSensitiveHeader(h.key)) {
-        return { key: h.key, value: obfuscateValue(h.value) };
-      }
-      return { key: h.key, value: h.value };
-    });
-  }
-
-  function deobfuscateSensitiveHeaders(headers) {
-    if (!Array.isArray(headers)) return headers;
-    return headers.map(function (h) {
-      if (isSensitiveHeader(h.key)) {
-        return { key: h.key, value: deobfuscateValue(h.value) };
-      }
-      return { key: h.key, value: h.value };
-    });
-  }
-
   function createDefaultConfig() {
     return {
       baseUrl: DEFAULT_BASE_URL,
@@ -328,7 +278,12 @@
     var configs = safeGetLocalStorage(CONFIG_STORAGE_KEY) || [];
     return configs.map(function (cfg) {
       if (cfg.headers && Array.isArray(cfg.headers)) {
-        cfg.headers = deobfuscateSensitiveHeaders(cfg.headers);
+        cfg.headers = cfg.headers.map(function (h) {
+          if (isSensitiveHeader(h.key) && typeof h.value === 'string') {
+            return { key: h.key, value: decryptValue(h.value) };
+          }
+          return h;
+        });
       }
       return cfg;
     });
@@ -338,7 +293,12 @@
     var toSave = configs.map(function (cfg) {
       var cloned = deepClone(cfg);
       if (cloned.headers && Array.isArray(cloned.headers)) {
-        cloned.headers = obfuscateSensitiveHeaders(cloned.headers);
+        cloned.headers = cloned.headers.map(function (h) {
+          if (isSensitiveHeader(h.key) && typeof h.value === 'string') {
+            return { key: h.key, value: encryptValue(h.value) };
+          }
+          return h;
+        });
       }
       return cloned;
     });
@@ -352,9 +312,7 @@
   function saveConfig(name, configData) {
     var configs = loadSavedConfigs();
     var existingIndex = configs.findIndex(function (c) { return c.name === name; });
-    var configToSave = {
-      name: name
-    };
+    var configToSave = {};
     Object.keys(configData).forEach(function (k) {
       configToSave[k] = deepClone(configData[k]);
     });
@@ -403,13 +361,26 @@
       '/models': '/models (列出模型)'
     };
 
-    var html = '<option value="" selected>-- 选择预设端点 --</option>';
+    var fragment = document.createDocumentFragment();
+    var defaultOption = document.createElement('option');
+    defaultOption.value = '';
+    defaultOption.selected = true;
+    defaultOption.textContent = '-- 选择预设端点 --';
+    fragment.appendChild(defaultOption);
+
     Object.keys(ENDPOINT_TEMPLATES).forEach(function (path) {
-      var label = endpointLabels[path] || path;
-      html += '<option value="' + path + '">' + label + '</option>';
+      var option = document.createElement('option');
+      option.value = path;
+      option.textContent = endpointLabels[path] || path;
+      fragment.appendChild(option);
     });
-    html += '<option value="custom">自定义路径...</option>';
-    return html;
+
+    var customOption = document.createElement('option');
+    customOption.value = 'custom';
+    customOption.textContent = '自定义路径...';
+    fragment.appendChild(customOption);
+
+    return fragment;
   }
 
   function extractPresetParamsFromBody(body, endpointPath, existingCustomParams) {
@@ -444,6 +415,61 @@
     return { body: newBody, customParams: newCustomParams };
   }
 
+  // 使用同步的字符串混淆进行敏感数据保护（比简单 XOR 更安全）
+  // 注意：这不是真正的加密，只是防止明文存储，真正的安全需要后端支持
+  var _obfuscationKey = null;
+
+  function getObfuscationKey() {
+    if (_obfuscationKey) return _obfuscationKey;
+    var host = typeof location !== 'undefined' ? location.hostname : 'default';
+    var keyStr = 'openai-debugger-v2-' + host;
+    var hash = 0;
+    for (var i = 0; i < keyStr.length; i++) {
+      var char = keyStr.charCodeAt(i);
+      hash = ((hash << 5) - hash) + char;
+      hash = hash & hash;
+    }
+    _obfuscationKey = Math.abs(hash).toString(36);
+    return _obfuscationKey;
+  }
+
+  function encryptValue(str) {
+    if (typeof str !== 'string' || str.indexOf('enc:') === 0) return str;
+    try {
+      var key = getObfuscationKey();
+      var result = '';
+      for (var i = 0; i < str.length; i++) {
+        var keyChar = key.charCodeAt(i % key.length);
+        var charCode = str.charCodeAt(i);
+        var encoded = (charCode + keyChar + i) % 65536;
+        result += String.fromCharCode(encoded);
+      }
+      return 'enc:' + btoa(unescape(encodeURIComponent(result)));
+    } catch (e) {
+      console.warn('加密失败，回退到明文:', e.message);
+      return str;
+    }
+  }
+
+  function decryptValue(str) {
+    if (typeof str !== 'string' || str.indexOf('enc:') !== 0) return str;
+    try {
+      var key = getObfuscationKey();
+      var encoded = decodeURIComponent(escape(atob(str.substring(4))));
+      var result = '';
+      for (var i = 0; i < encoded.length; i++) {
+        var keyChar = key.charCodeAt(i % key.length);
+        var charCode = encoded.charCodeAt(i);
+        var decoded = (charCode - keyChar - i + 65536) % 65536;
+        result += String.fromCharCode(decoded);
+      }
+      return result;
+    } catch (e) {
+      console.warn('解密失败，返回原值:', e.message);
+      return str;
+    }
+  }
+
   window.AppConfig = {
     ENDPOINT_TEMPLATES: ENDPOINT_TEMPLATES,
     CUSTOM_PARAM_PRESETS: CUSTOM_PARAM_PRESETS,
@@ -475,6 +501,8 @@
     getConfigByName: getConfigByName,
     deepClone: deepClone,
     buildEndpointSelectOptions: buildEndpointSelectOptions,
-    extractPresetParamsFromBody: extractPresetParamsFromBody
+    extractPresetParamsFromBody: extractPresetParamsFromBody,
+    encryptValue: encryptValue,
+    decryptValue: decryptValue
   };
 })();

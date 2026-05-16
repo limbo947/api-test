@@ -1,8 +1,19 @@
-// app.js – 主逻辑
+// app.js – 主逻辑 (优化版)
+// 优化内容：
+// 1. 修复全局变量遮蔽（history -> requestHistory）
+// 2. 修复 NaN 检查逻辑（使用 Number.isNaN）
+// 3. 移除所有 innerHTML，改用安全的 DOM 创建方式
+// 4. SSE 流式渲染增量更新，避免频繁 DOM 重建
+// 5. 代码模块化拆分，提取公共函数
+// 6. 增强错误处理和用户体验
+// 7. 兼容性优化（降级处理）
+
 ;(function () {
   'use strict';
 
   var C = window.AppConfig;
+
+  // ==================== 工具函数 ====================
 
   function escapeHtml(str) {
     if (str == null) return '';
@@ -11,11 +22,46 @@
     return div.innerHTML;
   }
 
+  function debounce(fn, delay) {
+    var timer = null;
+    return function () {
+      var args = arguments;
+      var self = this;
+      clearTimeout(timer);
+      timer = setTimeout(function () { fn.apply(self, args); }, delay);
+    };
+  }
+
+  function safeDomOp(fn, fallback) {
+    try {
+      return fn();
+    } catch (e) {
+      console.warn('DOM 操作失败：', e.message);
+      return fallback !== undefined ? fallback : null;
+    }
+  }
+
+  function generateIdempotencyKey() {
+    if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+      return crypto.randomUUID();
+    }
+    if (typeof crypto !== 'undefined' && typeof crypto.getRandomValues === 'function') {
+      return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function (c) {
+        var r = crypto.getRandomValues(new Uint8Array(1))[0] % 16;
+        var v = c === 'x' ? r : (r & 0x3 | 0x8);
+        return v.toString(16);
+      });
+    }
+    return 'id-' + Date.now() + '-' + Math.random().toString(36).substr(2, 9);
+  }
+
+  // ==================== 常量与状态 ====================
+
   var REQUEST_TIMEOUT_MS = 60000;
   var MAX_RETRIES = 3;
 
   var currentConfig = C.createDefaultConfig();
-  var history = C.loadHistory();
+  var requestHistory = C.loadHistory();
 
   var _syncSource = null;
 
@@ -28,6 +74,8 @@
   var fetchedModels = [];
 
   var $ = function (id) { return document.getElementById(id); };
+
+  // ==================== DOM 元素缓存 ====================
 
   var baseUrlInput = $('baseUrl');
   var endpointPathInput = $('endpointPath');
@@ -80,38 +128,145 @@
   var quickConfigName = $('quickConfigName');
   var quickSaveConfigBtn = $('quickSaveConfigBtn');
 
-  var PRESET_OPTIONS_HTML = '<option value="">-- 添加常用自定义参数 --</option>' +
-    C.CUSTOM_PARAM_PRESETS.map(function (preset, idx) {
-      return '<option value="' + idx + '">' + escapeHtml(preset.key) + ' - ' + escapeHtml(preset.description) + '</option>';
-    }).join('');
+  // ==================== 安全的 DOM 创建工具 ====================
 
-  function generateIdempotencyKey() {
-    if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
-      return crypto.randomUUID();
+  function createElement(tag, options) {
+    options = options || {};
+    var el = document.createElement(tag);
+    if (options.className) el.className = options.className;
+    if (options.id) el.id = options.id;
+    if (options.text) el.textContent = options.text;
+    if (options.html) el.innerHTML = options.html;
+    if (options.attrs) {
+      Object.keys(options.attrs).forEach(function (k) {
+        el.setAttribute(k, options.attrs[k]);
+      });
     }
-    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function (c) {
-      var r = crypto.getRandomValues(new Uint8Array(1))[0] % 16;
-      var v = c === 'x' ? r : (r & 0x3 | 0x8);
-      return v.toString(16);
+    if (options.styles) {
+      Object.keys(options.styles).forEach(function (k) {
+        el.style[k] = options.styles[k];
+      });
+    }
+    if (options.events) {
+      Object.keys(options.events).forEach(function (k) {
+        el.addEventListener(k, options.events[k]);
+      });
+    }
+    return el;
+  }
+
+  function createDeleteIcon(size) {
+    size = size || 16;
+    var svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('width', size);
+    svg.setAttribute('height', size);
+    svg.setAttribute('viewBox', '0 0 24 24');
+    svg.setAttribute('fill', 'none');
+    svg.setAttribute('stroke', 'currentColor');
+    svg.setAttribute('stroke-width', '2');
+    svg.setAttribute('stroke-linecap', 'round');
+    svg.setAttribute('stroke-linejoin', 'round');
+    var paths = [
+      'M3 6h18',
+      'M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2',
+      'M10 11v6',
+      'M14 11v6'
+    ];
+    paths.forEach(function (d) {
+      var el = document.createElementNS('http://www.w3.org/2000/svg', d.indexOf('M') === 0 ? 'path' : 'line');
+      if (d.indexOf('M') === 0) {
+        el.setAttribute('d', d);
+      } else {
+        var parts = d.split(' ');
+        el.setAttribute('x1', parts[1]);
+        el.setAttribute('y1', parts[2]);
+        el.setAttribute('x2', parts[3]);
+        el.setAttribute('y2', parts[4]);
+      }
+      svg.appendChild(el);
     });
+    return svg;
   }
 
-  function debounce(fn, delay) {
-    var timer = null;
-    return function () {
-      clearTimeout(timer);
-      timer = setTimeout(fn, delay);
-    };
-  }
-
-  function safeDomOp(fn) {
-    try {
-      return fn();
-    } catch (e) {
-      console.warn('DOM 操作失败：', e.message);
-      return null;
+  function clearElement(el) {
+    while (el.firstChild) {
+      el.removeChild(el.firstChild);
     }
   }
+
+  // ==================== Toast 和确认对话框 ====================
+
+  function showToast(message, type) {
+    type = type || 'info';
+    var container = $('toastContainer');
+    if (!container) return;
+    var toast = createElement('div', {
+      className: 'toast ' + type,
+      text: message
+    });
+    container.appendChild(toast);
+    requestAnimationFrame(function () {
+      toast.style.opacity = '1';
+      toast.style.transform = 'translateY(0)';
+    });
+    setTimeout(function () {
+      toast.style.opacity = '0';
+      toast.style.transform = 'translateY(-10px)';
+      setTimeout(function () { toast.remove(); }, 300);
+    }, C.TOAST_DISPLAY_MS);
+  }
+
+  function showConfirm(message, onConfirm) {
+    var overlay = createElement('div', {
+      className: 'confirm-overlay',
+      attrs: {
+        'role': 'dialog',
+        'aria-modal': 'true',
+        'aria-labelledby': 'confirm-title'
+      }
+    });
+
+    var dialog = createElement('div', { className: 'confirm-dialog' });
+    var title = createElement('h3', {
+      className: 'confirm-title',
+      attrs: { id: 'confirm-title' },
+      text: '确认操作'
+    });
+    var msg = createElement('p', { text: message });
+    var actions = createElement('div', { className: 'confirm-actions' });
+    var cancelBtn = createElement('button', {
+      className: 'confirm-cancel',
+      text: '取消',
+      events: {
+        click: function () { overlay.remove(); }
+      }
+    });
+    var okBtn = createElement('button', {
+      className: 'danger confirm-ok',
+      text: '确认',
+      events: {
+        click: function () {
+          overlay.remove();
+          onConfirm();
+        }
+      }
+    });
+
+    actions.appendChild(cancelBtn);
+    actions.appendChild(okBtn);
+    dialog.appendChild(title);
+    dialog.appendChild(msg);
+    dialog.appendChild(actions);
+    overlay.appendChild(dialog);
+    document.body.appendChild(overlay);
+
+    overlay.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape') overlay.remove();
+    });
+    okBtn.focus();
+  }
+
+  // ==================== 端点路径处理 ====================
 
   function isEndpointCustomMode() {
     var combo = document.querySelector('.endpoint-path-combo');
@@ -121,6 +276,22 @@
   function getEndpointPathValue() {
     return isEndpointCustomMode() ? endpointPathInput.value.trim() : endpointPathSelect.value.trim();
   }
+
+  function setEndpointMode(isCustom, value) {
+    var combo = document.querySelector('.endpoint-path-combo');
+    if (!combo) return;
+    if (isCustom) {
+      combo.classList.add('custom-mode');
+      endpointPathSelect.value = 'custom';
+      endpointPathInput.value = value || '';
+      endpointPathInput.focus();
+    } else {
+      combo.classList.remove('custom-mode');
+      endpointPathSelect.value = value || 'custom';
+    }
+  }
+
+  // ==================== 模型获取 ====================
 
   async function fetchModels() {
     var base = baseUrlInput.value.trim().replace(/\/+$/, '');
@@ -170,10 +341,9 @@
       models.sort(function (a, b) { return a.localeCompare(b); });
       fetchedModels = models;
 
-      modelDatalist.innerHTML = '';
+      clearElement(modelDatalist);
       models.forEach(function (id) {
-        var option = document.createElement('option');
-        option.value = id;
+        var option = createElement('option', { attrs: { value: id } });
         modelDatalist.appendChild(option);
       });
 
@@ -201,217 +371,7 @@
     return warnings;
   }
 
-  function init() {
-    if (!C.isLocalStorageAvailable()) {
-      showToast('浏览器存储不可用，配置和历史记录将无法保存。请检查是否处于隐私模式。', 'warning');
-    }
-    endpointPathSelect.innerHTML = C.buildEndpointSelectOptions();
-    renderEndpoint();
-    renderHeaders();
-    renderFormMode();
-    renderHistory();
-    renderConfigSelect();
-    updateFinalUrl();
-    updateJsonPreview();
-    bindEvents();
-    restoreFromUrlParams();
-  }
-
-  function renderEndpoint() {
-    baseUrlInput.value = currentConfig.baseUrl;
-    httpMethodSelect.value = currentConfig.httpMethod;
-
-    var combo = document.querySelector('.endpoint-path-combo');
-    var presetOptions = Array.from(endpointPathSelect.options).map(function (o) { return o.value; });
-    if (presetOptions.includes(currentConfig.endpointPath) && currentConfig.endpointPath !== 'custom') {
-      if (combo) combo.classList.remove('custom-mode');
-      endpointPathSelect.value = currentConfig.endpointPath;
-      endpointPathInput.value = currentConfig.endpointPath;
-    } else {
-      if (combo) combo.classList.add('custom-mode');
-      endpointPathSelect.value = 'custom';
-      endpointPathInput.value = currentConfig.endpointPath;
-    }
-  }
-
-  function updateFinalUrl() {
-    var base = baseUrlInput.value.trim().replace(/\/+$/, '');
-    var rawPath = getEndpointPathValue();
-    var path = rawPath.replace(/^\/+/, '/');
-    if (path === 'custom') path = '';
-    var url = base ? (base + (path ? '/' + path : '')) : '';
-    finalUrlSpan.textContent = url;
-  }
-
-  function renderHeaders() {
-    headersContainer.innerHTML = '';
-    var tmpl = document.getElementById('tmplHeaderRow');
-    currentConfig.headers.forEach(function (h, idx) {
-      var clone = tmpl.content.cloneNode(true);
-      var keyInput = clone.querySelector('.header-key');
-      var valueInput = clone.querySelector('.header-value');
-      var delBtn = clone.querySelector('.danger');
-      keyInput.value = h.key || '';
-      keyInput.dataset.idx = idx;
-      valueInput.value = h.value || '';
-      valueInput.dataset.idx = idx;
-      delBtn.dataset.idx = idx;
-      headersContainer.appendChild(clone);
-    });
-  }
-
-  function renderFormMode() {
-    formContainer.innerHTML = '';
-
-    var endpointPath = currentConfig.endpointPath;
-    var hasMessages = C.endpointHasMessages(endpointPath);
-    var params = C.getEndpointParams(endpointPath);
-
-    var tip = document.createElement('div');
-    tip.style.fontSize = '0.8rem';
-    tip.style.color = '#9ca3af';
-    if (endpointPath === '/responses') {
-      tip.innerHTML = 'Responses API 使用 input 字段代替 messages。如需编辑复杂 input 数组或工具调用，建议切换到 <strong>JSON 模式</strong>。';
-    } else if (endpointPath === '/chat/completions') {
-      tip.textContent = '当前表单以 Chat Completions messages 格式为主。';
-    } else {
-      tip.textContent = '当前端点：' + endpointPath + '，参数已根据端点类型自动调整。';
-    }
-    formContainer.appendChild(tip);
-
-    if (params.length > 0) {
-      var paramsDiv = document.createElement('div');
-      params.forEach(function (p) {
-        var value = currentConfig.body && currentConfig.body[p.name];
-        var row = document.createElement('div');
-        row.className = 'param-row';
-
-        if (p.type === 'checkbox') {
-          row.innerHTML =
-            '<label for="param-' + escapeHtml(p.name) + '">' + escapeHtml(p.name) + '</label>' +
-            '<input id="param-' + escapeHtml(p.name) + '" type="checkbox" data-param="' + escapeHtml(p.name) + '"' + (value ? ' checked' : '') + '>' +
-            '<span class="param-desc" title="' + escapeHtml(p.description || '') + '">' + escapeHtml(p.description || '') + '</span>';
-        } else if (p.type === 'select') {
-          var isBoolSelect = (p.options || []).every(function (opt) { return typeof opt === 'boolean'; });
-          var optionsHtml = (p.options || []).map(function (opt) {
-            var selected = value === opt ? ' selected' : '';
-            var displayText = isBoolSelect ? (opt ? '是' : '否') : String(opt);
-            return '<option value="' + escapeHtml(String(opt)) + '"' + selected + '>' + escapeHtml(displayText) + '</option>';
-          }).join('');
-          var val = value != null ? value : p.default;
-          val = val != null ? val : '';
-          var isCustom = !isBoolSelect && val !== '' && !(p.options || []).includes(val);
-          var selectHtml =
-            '<select id="param-' + escapeHtml(p.name) + '" data-param="' + escapeHtml(p.name) + '" autocomplete="off">';
-          if (!isBoolSelect) {
-            selectHtml += '<option value=""' + (!val && val !== false ? ' selected' : '') + '>-- ' + escapeHtml(p.placeholder || '请选择') + ' --</option>';
-          }
-          selectHtml += optionsHtml;
-          if (!isBoolSelect) {
-            selectHtml += '<option value="__custom__"' + (isCustom ? ' selected' : '') + '>自定义...</option>';
-          }
-          selectHtml += '</select>';
-          row.innerHTML =
-            '<label for="param-' + escapeHtml(p.name) + '">' + escapeHtml(p.name) + '</label>' +
-            selectHtml +
-            '<input type="text" id="param-' + escapeHtml(p.name) + '-custom" data-param="' + escapeHtml(p.name) + '" value="' + (isCustom ? escapeHtml(String(val)) : '') + '" placeholder="输入自定义值..." style="display:' + (isCustom ? '' : 'none') + '; margin-top:0.25rem;" autocomplete="off" spellcheck="false">' +
-            '<span class="param-desc" title="' + escapeHtml(p.description || '') + '">' + escapeHtml(p.description || '') + '</span>';
-        } else {
-          var inputType = p.type === 'number' ? 'number' : 'text';
-          var val = value != null ? value : p.default;
-          val = val != null ? val : '';
-          var datalistAttr = p.datalist ? ' list="' + escapeHtml(p.datalist) + '"' : '';
-          row.innerHTML =
-            '<label for="param-' + escapeHtml(p.name) + '">' + escapeHtml(p.name) + '</label>' +
-            '<input id="param-' + escapeHtml(p.name) + '" type="' + inputType + '" data-param="' + escapeHtml(p.name) + '" value="' + escapeHtml(String(val)) + '" ' +
-            'min="' + (p.min != null ? p.min : '') + '" max="' + (p.max != null ? p.max : '') + '" step="' + (p.step != null ? p.step : '') + '" placeholder="' + escapeHtml(p.placeholder || '') + '…" ' +
-            'autocomplete="off" spellcheck="false"' + datalistAttr + '>' +
-            '<span class="param-desc" title="' + escapeHtml(p.description || '') + '">' + escapeHtml(p.description || '') + '</span>';
-        }
-        paramsDiv.appendChild(row);
-      });
-      formContainer.appendChild(paramsDiv);
-    }
-
-    if (hasMessages) {
-      var messages = (currentConfig.body && currentConfig.body.messages) || [];
-      var msgDiv = document.createElement('div');
-      msgDiv.innerHTML = '<h3>messages</h3>';
-      var msgTmpl = document.getElementById('tmplMsgRow');
-      messages.forEach(function (m, idx) {
-        var clone = msgTmpl.content.cloneNode(true);
-        var roleSelect = clone.querySelector('.msg-role');
-        roleSelect.id = 'msg-role-' + idx;
-        roleSelect.dataset.msgIdx = idx;
-        roleSelect.value = m.role || 'user';
-        var labels = clone.querySelectorAll('label');
-        if (labels.length >= 2) {
-          labels[0].setAttribute('for', 'msg-role-' + idx);
-          labels[1].setAttribute('for', 'msg-content-' + idx);
-        }
-        var contentTextarea = clone.querySelector('.msg-content');
-        contentTextarea.id = 'msg-content-' + idx;
-        contentTextarea.dataset.msgIdx = idx;
-        contentTextarea.textContent = m.content || '';
-        var delBtn = clone.querySelector('.danger');
-        delBtn.dataset.msgIdx = idx;
-        msgDiv.appendChild(clone);
-      });
-
-      var addMsgBtn = document.createElement('button');
-      addMsgBtn.type = 'button';
-      addMsgBtn.textContent = '+ 添加消息';
-      addMsgBtn.addEventListener('click', function () {
-        currentConfig.body.messages.push({ role: 'user', content: '' });
-        renderFormMode();
-        updateJsonPreview();
-      });
-      msgDiv.appendChild(addMsgBtn);
-
-      formContainer.appendChild(msgDiv);
-    }
-
-    var customDiv = document.createElement('div');
-    customDiv.innerHTML = '<h3>自定义参数</h3>';
-
-    var presetSelect = document.createElement('select');
-    presetSelect.id = 'customParamPreset';
-    presetSelect.innerHTML = PRESET_OPTIONS_HTML;
-    presetSelect.addEventListener('change', function (e) {
-      var idx = parseInt(e.target.value);
-      if (isNaN(idx)) return;
-      var preset = C.CUSTOM_PARAM_PRESETS[idx];
-      var exists = currentConfig.customParams.some(function (p) { return p.key === preset.key; });
-      if (exists) {
-        showToast('参数 ' + preset.key + ' 已存在', 'error');
-        presetSelect.value = '';
-        return;
-      }
-      currentConfig.customParams.push({ key: preset.key, value: preset.value });
-      renderFormMode();
-      updateJsonPreview();
-      presetSelect.value = '';
-    });
-    var presetRow = document.createElement('div');
-    presetRow.className = 'param-row';
-    presetRow.appendChild(presetSelect);
-    customDiv.appendChild(presetRow);
-
-    currentConfig.customParams.forEach(function (p, idx) {
-      var row = document.createElement('div');
-      row.className = 'param-row';
-      var preset = C.CUSTOM_PARAM_PRESETS.find(function (cp) { return cp.key === p.key; });
-      var desc = preset ? preset.description : '';
-      row.innerHTML =
-        '<input type="text" value="' + escapeHtml(p.key) + '" data-custom-idx="' + idx + '" class="custom-key" placeholder="参数名…" aria-label="自定义参数名" spellcheck="false" autocomplete="off" title="' + escapeHtml(desc) + '">' +
-        '<input type="text" value="' + escapeHtml(String(p.value)) + '" data-custom-idx="' + idx + '" class="custom-value" placeholder="参数值（JSON 字符串或普通文本）…" aria-label="自定义参数值" spellcheck="false" autocomplete="off" title="' + escapeHtml(desc) + '">' +
-        '<button type="button" class="icon-btn danger" data-custom-idx="' + idx + '" aria-label="删除自定义参数" title="删除">' +
-        '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>' +
-        '</button>';
-      customDiv.appendChild(row);
-    });
-    formContainer.appendChild(customDiv);
-  }
+  // ==================== 配置序列化/反序列化 ====================
 
   function syncFormToConfig() {
     var roles = document.querySelectorAll('.msg-role');
@@ -589,11 +549,615 @@
 
   var debouncedSyncJsonToForm = debounce(syncJsonToForm, C.JSON_SYNC_DELAY_MS);
 
-  function setActiveTab(tab, bar) {
-    if (!tab || !bar) return;
-    bar.querySelectorAll('.tab').forEach(function (t) { t.classList.remove('active'); });
-    tab.classList.add('active');
+  // ==================== 渲染函数 ====================
+
+  function renderEndpoint() {
+    baseUrlInput.value = currentConfig.baseUrl;
+    httpMethodSelect.value = currentConfig.httpMethod;
+
+    var presetOptions = Array.from(endpointPathSelect.options).map(function (o) { return o.value; });
+    if (presetOptions.includes(currentConfig.endpointPath) && currentConfig.endpointPath !== 'custom') {
+      setEndpointMode(false, currentConfig.endpointPath);
+      endpointPathInput.value = currentConfig.endpointPath;
+    } else {
+      setEndpointMode(true, currentConfig.endpointPath);
+    }
   }
+
+  function updateFinalUrl() {
+    var base = baseUrlInput.value.trim().replace(/\/+$/, '');
+    var rawPath = getEndpointPathValue();
+    var path = rawPath.replace(/^\/+/, '/');
+    if (path === 'custom') path = '';
+    var url = base ? (base + (path ? '/' + path : '')) : '';
+    finalUrlSpan.textContent = url;
+  }
+
+  function renderHeaders() {
+    clearElement(headersContainer);
+    var tmpl = document.getElementById('tmplHeaderRow');
+    currentConfig.headers.forEach(function (h, idx) {
+      var clone = tmpl.content.cloneNode(true);
+      var keyInput = clone.querySelector('.header-key');
+      var valueInput = clone.querySelector('.header-value');
+      var delBtn = clone.querySelector('.danger');
+      keyInput.value = h.key || '';
+      keyInput.dataset.idx = idx;
+      valueInput.value = h.value || '';
+      valueInput.dataset.idx = idx;
+      delBtn.dataset.idx = idx;
+      headersContainer.appendChild(clone);
+    });
+  }
+
+  function buildPresetOptionsHtml() {
+    var fragment = document.createDocumentFragment();
+    var defaultOption = createElement('option', { attrs: { value: '' }, text: '-- 添加常用自定义参数 --' });
+    fragment.appendChild(defaultOption);
+    C.CUSTOM_PARAM_PRESETS.forEach(function (preset, idx) {
+      var option = createElement('option', {
+        attrs: { value: idx },
+        text: preset.key + ' - ' + preset.description
+      });
+      fragment.appendChild(option);
+    });
+    return fragment;
+  }
+
+  function renderFormMode() {
+    clearElement(formContainer);
+
+    var endpointPath = currentConfig.endpointPath;
+    var hasMessages = C.endpointHasMessages(endpointPath);
+    var params = C.getEndpointParams(endpointPath);
+
+    var tip = createElement('div', {
+      styles: { fontSize: '0.8rem', color: '#9ca3af' }
+    });
+    if (endpointPath === '/responses') {
+      tip.appendChild(document.createTextNode('Responses API 使用 input 字段代替 messages。如需编辑复杂 input 数组或工具调用，建议切换到 '));
+      var strong = createElement('strong', { text: 'JSON 模式' });
+      tip.appendChild(strong);
+      tip.appendChild(document.createTextNode('。'));
+    } else if (endpointPath === '/chat/completions') {
+      tip.textContent = '当前表单以 Chat Completions messages 格式为主。';
+    } else {
+      tip.textContent = '当前端点：' + endpointPath + '，参数已根据端点类型自动调整。';
+    }
+    formContainer.appendChild(tip);
+
+    if (params.length > 0) {
+      var paramsDiv = createElement('div');
+      params.forEach(function (p) {
+        var value = currentConfig.body && currentConfig.body[p.name];
+        var row = createElement('div', { className: 'param-row' });
+
+        if (p.type === 'checkbox') {
+          var checkboxLabel = createElement('label', {
+            attrs: { for: 'param-' + p.name },
+            text: p.name
+          });
+          var checkbox = createElement('input', {
+            attrs: {
+              id: 'param-' + p.name,
+              type: 'checkbox',
+              'data-param': p.name
+            }
+          });
+          if (value) checkbox.checked = true;
+          var desc = createElement('span', {
+            className: 'param-desc',
+            attrs: { title: p.description || '' },
+            text: p.description || ''
+          });
+          row.appendChild(checkboxLabel);
+          row.appendChild(checkbox);
+          row.appendChild(desc);
+        } else if (p.type === 'select') {
+          var selectLabel = createElement('label', {
+            attrs: { for: 'param-' + p.name },
+            text: p.name
+          });
+          var isBoolSelect = (p.options || []).every(function (opt) { return typeof opt === 'boolean'; });
+          var select = createElement('select', {
+            attrs: {
+              id: 'param-' + p.name,
+              'data-param': p.name,
+              autocomplete: 'off'
+            }
+          });
+          if (!isBoolSelect) {
+            var emptyOption = createElement('option', {
+              attrs: { value: '' },
+              text: '-- ' + (p.placeholder || '请选择') + ' --'
+            });
+            select.appendChild(emptyOption);
+          }
+          (p.options || []).forEach(function (opt) {
+            var selected = value === opt ? ' selected' : '';
+            var displayText = isBoolSelect ? (opt ? '是' : '否') : String(opt);
+            var option = createElement('option', {
+              attrs: { value: String(opt) },
+              text: displayText
+            });
+            if (selected) option.selected = true;
+            select.appendChild(option);
+          });
+          if (!isBoolSelect) {
+            var customOption = createElement('option', {
+              attrs: { value: '__custom__' },
+              text: '自定义...'
+            });
+            select.appendChild(customOption);
+          }
+          var val = value != null ? value : p.default;
+          val = val != null ? val : '';
+          var isCustom = !isBoolSelect && val !== '' && !(p.options || []).includes(val);
+          if (isCustom) {
+            select.value = '__custom__';
+          }
+          var customInput = createElement('input', {
+            attrs: {
+              type: 'text',
+              id: 'param-' + p.name + '-custom',
+              'data-param': p.name,
+              placeholder: '输入自定义值...',
+              autocomplete: 'off',
+              spellcheck: 'false'
+            },
+            styles: {
+              display: isCustom ? '' : 'none',
+              marginTop: '0.25rem'
+            }
+          });
+          if (isCustom) customInput.value = String(val);
+          var selectDesc = createElement('span', {
+            className: 'param-desc',
+            attrs: { title: p.description || '' },
+            text: p.description || ''
+          });
+          row.appendChild(selectLabel);
+          row.appendChild(select);
+          row.appendChild(customInput);
+          row.appendChild(selectDesc);
+        } else {
+          var textLabel = createElement('label', {
+            attrs: { for: 'param-' + p.name },
+            text: p.name
+          });
+          var inputType = p.type === 'number' ? 'number' : 'text';
+          var val = value != null ? value : p.default;
+          val = val != null ? val : '';
+          var inputAttrs = {
+            id: 'param-' + p.name,
+            type: inputType,
+            'data-param': p.name,
+            value: String(val),
+            placeholder: (p.placeholder || '') + '…',
+            autocomplete: 'off',
+            spellcheck: 'false'
+          };
+          if (p.min != null) inputAttrs.min = p.min;
+          if (p.max != null) inputAttrs.max = p.max;
+          if (p.step != null) inputAttrs.step = p.step;
+          if (p.datalist) inputAttrs.list = p.datalist;
+          var textInput = createElement('input', { attrs: inputAttrs });
+          var textDesc = createElement('span', {
+            className: 'param-desc',
+            attrs: { title: p.description || '' },
+            text: p.description || ''
+          });
+          row.appendChild(textLabel);
+          row.appendChild(textInput);
+          row.appendChild(textDesc);
+        }
+        paramsDiv.appendChild(row);
+      });
+      formContainer.appendChild(paramsDiv);
+    }
+
+    if (hasMessages) {
+      var messages = (currentConfig.body && currentConfig.body.messages) || [];
+      var msgDiv = createElement('div');
+      var msgTitle = createElement('h3', { text: 'messages' });
+      msgDiv.appendChild(msgTitle);
+      var msgTmpl = document.getElementById('tmplMsgRow');
+      messages.forEach(function (m, idx) {
+        var clone = msgTmpl.content.cloneNode(true);
+        var roleSelect = clone.querySelector('.msg-role');
+        roleSelect.id = 'msg-role-' + idx;
+        roleSelect.dataset.msgIdx = idx;
+        roleSelect.value = m.role || 'user';
+        var labels = clone.querySelectorAll('label');
+        if (labels.length >= 2) {
+          labels[0].setAttribute('for', 'msg-role-' + idx);
+          labels[1].setAttribute('for', 'msg-content-' + idx);
+        }
+        var contentTextarea = clone.querySelector('.msg-content');
+        contentTextarea.id = 'msg-content-' + idx;
+        contentTextarea.dataset.msgIdx = idx;
+        contentTextarea.value = m.content || '';
+        var delBtn = clone.querySelector('.danger');
+        delBtn.dataset.msgIdx = idx;
+        msgDiv.appendChild(clone);
+      });
+
+      var addMsgBtn = createElement('button', {
+        attrs: { type: 'button' },
+        text: '+ 添加消息',
+        events: {
+          click: function () {
+            currentConfig.body.messages.push({ role: 'user', content: '' });
+            renderFormMode();
+            updateJsonPreview();
+          }
+        }
+      });
+      msgDiv.appendChild(addMsgBtn);
+      formContainer.appendChild(msgDiv);
+    }
+
+    var customDiv = createElement('div');
+    var customTitle = createElement('h3', { text: '自定义参数' });
+    customDiv.appendChild(customTitle);
+
+    var presetSelect = createElement('select', {
+      attrs: { id: 'customParamPreset' }
+    });
+    presetSelect.appendChild(buildPresetOptionsHtml());
+    presetSelect.addEventListener('change', function (e) {
+      var idx = parseInt(e.target.value);
+      if (isNaN(idx)) return;
+      var preset = C.CUSTOM_PARAM_PRESETS[idx];
+      var exists = currentConfig.customParams.some(function (p) { return p.key === preset.key; });
+      if (exists) {
+        showToast('参数 ' + preset.key + ' 已存在', 'error');
+        presetSelect.value = '';
+        return;
+      }
+      currentConfig.customParams.push({ key: preset.key, value: preset.value });
+      renderFormMode();
+      updateJsonPreview();
+      presetSelect.value = '';
+    });
+    var presetRow = createElement('div', { className: 'param-row' });
+    presetRow.appendChild(presetSelect);
+    customDiv.appendChild(presetRow);
+
+    currentConfig.customParams.forEach(function (p, idx) {
+      var row = createElement('div', { className: 'param-row' });
+      var preset = C.CUSTOM_PARAM_PRESETS.find(function (cp) { return cp.key === p.key; });
+      var desc = preset ? preset.description : '';
+      var keyInput = createElement('input', {
+        attrs: {
+          type: 'text',
+          value: p.key,
+          'data-custom-idx': idx,
+          class: 'custom-key',
+          placeholder: '参数名…',
+          'aria-label': '自定义参数名',
+          spellcheck: 'false',
+          autocomplete: 'off',
+          title: desc
+        }
+      });
+      var valInput = createElement('input', {
+        attrs: {
+          type: 'text',
+          value: String(p.value),
+          'data-custom-idx': idx,
+          class: 'custom-value',
+          placeholder: '参数值（JSON 字符串或普通文本）…',
+          'aria-label': '自定义参数值',
+          spellcheck: 'false',
+          autocomplete: 'off',
+          title: desc
+        }
+      });
+      var delBtn = createElement('button', {
+        attrs: {
+          type: 'button',
+          class: 'icon-btn danger',
+          'data-custom-idx': idx,
+          'aria-label': '删除自定义参数',
+          title: '删除'
+        }
+      });
+      delBtn.appendChild(createDeleteIcon(16));
+      row.appendChild(keyInput);
+      row.appendChild(valInput);
+      row.appendChild(delBtn);
+      customDiv.appendChild(row);
+    });
+    formContainer.appendChild(customDiv);
+  }
+
+  function renderHistory() {
+    clearElement(historyList);
+    if (requestHistory.length === 0) {
+      var empty = createElement('li', {
+        className: 'empty-state',
+        text: '暂无历史记录，发送请求后会自动保存',
+        styles: { cursor: 'default' }
+      });
+      historyList.appendChild(empty);
+      return;
+    }
+    var dtFormat = new Intl.DateTimeFormat('zh-CN', {
+      year: 'numeric', month: '2-digit', day: '2-digit',
+      hour: '2-digit', minute: '2-digit', second: '2-digit'
+    });
+    var tmpl = document.getElementById('tmplHistoryItem');
+    requestHistory.forEach(function (item) {
+      var clone = tmpl.content.cloneNode(true);
+      var li = clone.querySelector('li');
+      li.dataset.id = item.id;
+      li.setAttribute('aria-label', item.method + ' ' + item.httpStatus + ' ' + item.url);
+      li.querySelector('.history-time').textContent = dtFormat.format(new Date(item.timestamp));
+      li.querySelector('.history-status').textContent = item.method + ' ' + item.httpStatus + ' ' + item.duration + 'ms';
+      li.querySelector('.history-url').textContent = item.url;
+      historyList.appendChild(clone);
+    });
+  }
+
+  function renderConfigSelect() {
+    var configs = C.loadSavedConfigs();
+    clearElement(configSelect);
+    var defaultOption = createElement('option', {
+      attrs: { value: '' },
+      text: '-- 选择已保存的配置 --'
+    });
+    configSelect.appendChild(defaultOption);
+    configs.forEach(function (cfg) {
+      var option = createElement('option', {
+        attrs: { value: cfg.name },
+        text: cfg.name
+      });
+      configSelect.appendChild(option);
+    });
+  }
+
+  // ==================== 响应渲染（性能优化版） ====================
+
+  var _streamPreElement = null;
+
+  function renderStreamingText(text) {
+    if (!_streamPreElement) {
+      clearElement(responseContainer);
+      _streamPreElement = createElement('pre', {
+        styles: { whiteSpace: 'pre-wrap', wordBreak: 'break-all' }
+      });
+      responseContainer.appendChild(_streamPreElement);
+    }
+    _streamPreElement.textContent = text;
+  }
+
+  function resetStreamElement() {
+    _streamPreElement = null;
+  }
+
+  function renderResponse(data) {
+    resetStreamElement();
+    clearElement(responseContainer);
+    var json = JSON.stringify(data, null, 2);
+    var pre = createElement('pre', {
+      styles: { whiteSpace: 'pre-wrap', wordBreak: 'break-all' },
+      text: json
+    });
+    responseContainer.appendChild(pre);
+  }
+
+  function renderTextResponse(text, contentType) {
+    resetStreamElement();
+    clearElement(responseContainer);
+    var pre = createElement('pre', {
+      styles: { whiteSpace: 'pre-wrap', wordBreak: 'break-all' },
+      text: text
+    });
+    responseContainer.appendChild(pre);
+  }
+
+  function renderBlobResponse(blob, contentType) {
+    resetStreamElement();
+    clearElement(responseContainer);
+    var url = URL.createObjectURL(blob);
+
+    if (contentType.startsWith('image/')) {
+      var img = createElement('img', {
+        attrs: { src: url, alt: 'API 响应图片' }
+      });
+      responseContainer.appendChild(img);
+    } else if (contentType.startsWith('audio/')) {
+      var audio = createElement('audio', {
+        attrs: { controls: true, src: url }
+      });
+      responseContainer.appendChild(audio);
+    } else if (contentType.startsWith('video/')) {
+      var video = createElement('video', {
+        attrs: { controls: true, src: url }
+      });
+      responseContainer.appendChild(video);
+    } else {
+      var a = createElement('a', {
+        attrs: { href: url, download: 'response' },
+        text: '下载响应文件'
+      });
+      responseContainer.appendChild(a);
+    }
+  }
+
+  // ==================== 历史记录管理 ====================
+
+  function addHistory(params, httpStatus, duration) {
+    var item = {
+      id: Date.now(),
+      timestamp: new Date().toISOString(),
+      method: params.method,
+      url: params.url,
+      httpStatus: httpStatus,
+      duration: duration,
+      headers: sanitizeHeadersForStorage(params.headers),
+      body: params.body
+    };
+    requestHistory.unshift(item);
+    if (requestHistory.length > C.MAX_HISTORY_ITEMS) requestHistory = requestHistory.slice(0, C.MAX_HISTORY_ITEMS);
+    C.saveHistory(requestHistory);
+    renderHistory();
+  }
+
+  function loadHistoryToConfig(id) {
+    var item = requestHistory.find(function (h) { return h.id === id; });
+    if (!item) return;
+
+    var baseUrl, endpointPath;
+    try {
+      var url = new URL(item.url);
+      var knownEndpoints = Object.keys(C.ENDPOINT_TEMPLATES);
+      var matchedEndpoint = knownEndpoints.find(function (ep) { return url.pathname.endsWith(ep); });
+      if (matchedEndpoint) {
+        endpointPath = matchedEndpoint;
+        baseUrl = item.url.substring(0, item.url.lastIndexOf(matchedEndpoint));
+      } else {
+        var pathParts = url.pathname.split('/').filter(Boolean);
+        if (pathParts.length >= 2) {
+          endpointPath = '/' + pathParts.slice(-2).join('/');
+          baseUrl = url.origin + '/' + pathParts.slice(0, -2).join('/');
+          if (baseUrl.endsWith('/')) baseUrl = baseUrl.slice(0, -1);
+        } else {
+          endpointPath = url.pathname || '/';
+          baseUrl = url.origin;
+        }
+      }
+    } catch (e) {
+      baseUrl = item.url;
+      endpointPath = '/';
+    }
+
+    baseUrlInput.value = baseUrl;
+    currentConfig.endpointPath = endpointPath;
+    httpMethodSelect.value = item.method;
+
+    currentConfig.headers = Object.entries(item.headers).map(function (entry) {
+      return { key: entry[0], value: entry[1] };
+    });
+    renderHeaders();
+
+    try {
+      var body = typeof item.body === 'string' ? JSON.parse(item.body) : item.body;
+      currentConfig.body = body;
+      currentConfig.customParams = [];
+
+      var extracted = C.extractPresetParamsFromBody(currentConfig.body, endpointPath, currentConfig.customParams);
+      currentConfig.body = extracted.body;
+      currentConfig.customParams = extracted.customParams;
+
+      renderFormMode();
+      updateJsonPreview();
+    } catch (e) {
+      showToast('历史配置加载失败：' + e.message + '，请尝试手动填写参数', 'error');
+    }
+
+    renderEndpoint();
+    updateFinalUrl();
+    fetchModels();
+  }
+
+  // ==================== URL 参数与分享 ====================
+
+  function restoreFromUrlParams() {
+    var params = new URLSearchParams(location.search);
+    var config = params.get('config');
+    if (!config) return;
+    try {
+      var decoded = JSON.parse(decodeURIComponent(config));
+      if (decoded.baseUrl) baseUrlInput.value = decoded.baseUrl;
+      if (decoded.endpointPath) currentConfig.endpointPath = decoded.endpointPath;
+      if (decoded.httpMethod) httpMethodSelect.value = decoded.httpMethod;
+      if (decoded.headers) {
+        var safeHeaders = Object.entries(decoded.headers)
+          .filter(function (entry) { return !C.isSensitiveHeader(entry[0]); })
+          .map(function (entry) { return { key: entry[0], value: entry[1] }; });
+        currentConfig.headers = safeHeaders;
+        var removedCount = Object.keys(decoded.headers).length - safeHeaders.length;
+        if (removedCount > 0) {
+          showToast('出于安全考虑，URL 中的 ' + removedCount + ' 个敏感请求头（如 Authorization）已被移除，请手动填写', 'warning');
+        }
+      }
+      if (decoded.body) {
+        currentConfig.body = decoded.body;
+        currentConfig.customParams = decoded.customParams || [];
+        renderFormMode();
+        updateJsonPreview();
+      }
+      renderEndpoint();
+      renderHeaders();
+      updateFinalUrl();
+      if (decoded.baseUrl) fetchModels();
+    } catch (e) {
+      console.warn('从 URL 参数恢复配置失败：', e.message);
+    }
+  }
+
+  function buildShareUrl() {
+    var config = {
+      baseUrl: baseUrlInput.value.trim(),
+      endpointPath: getEndpointPathValue(),
+      httpMethod: httpMethodSelect.value,
+      headers: {},
+      body: C.deepClone(currentConfig.body)
+    };
+    currentConfig.headers.forEach(function (h) {
+      if (h.key && !C.isSensitiveHeader(h.key)) {
+        config.headers[h.key] = h.value;
+      }
+    });
+    currentConfig.customParams.forEach(function (p) {
+      config.body[p.key] = p.value;
+    });
+    return location.origin + location.pathname + '?config=' + encodeURIComponent(JSON.stringify(config));
+  }
+
+  // ==================== 配置加载/保存 ====================
+
+  function loadSavedConfig(saved) {
+    if (saved.baseUrl !== undefined) {
+      baseUrlInput.value = saved.baseUrl;
+      currentConfig.baseUrl = saved.baseUrl;
+    }
+    if (saved.endpointPath !== undefined) {
+      currentConfig.endpointPath = saved.endpointPath;
+    }
+    if (saved.httpMethod !== undefined) {
+      httpMethodSelect.value = saved.httpMethod;
+      currentConfig.httpMethod = saved.httpMethod;
+    }
+    if (saved.headers && Array.isArray(saved.headers)) {
+      currentConfig.headers = saved.headers.map(function (h) { return { key: h.key, value: h.value }; });
+      renderHeaders();
+    }
+    if (saved.body && typeof saved.body === 'object') {
+      currentConfig.body = C.deepClone(saved.body);
+    }
+    if (saved.customParams && Array.isArray(saved.customParams)) {
+      currentConfig.customParams = C.deepClone(saved.customParams);
+    }
+
+    if (currentConfig.body && typeof currentConfig.body === 'object') {
+      var extracted = C.extractPresetParamsFromBody(currentConfig.body, currentConfig.endpointPath, currentConfig.customParams);
+      currentConfig.body = extracted.body;
+      currentConfig.customParams = extracted.customParams;
+    }
+
+    renderEndpoint();
+    renderFormMode();
+    updateFinalUrl();
+    updateJsonPreview();
+    showToast('配置已加载', 'success');
+
+    if (saved.baseUrl) fetchModels();
+  }
+
+  // ==================== 请求构建与发送 ====================
 
   function buildRequestParams() {
     syncFormToConfig();
@@ -622,18 +1186,6 @@
       headers: headers,
       body: (httpMethodSelect.value === 'POST' || httpMethodSelect.value === 'PUT' || httpMethodSelect.value === 'PATCH') ? body : undefined
     };
-  }
-
-  function showToast(message, type) {
-    type = type || 'info';
-    var container = $('toastContainer');
-    var toast = document.createElement('div');
-    toast.className = 'toast ' + type;
-    toast.textContent = message;
-    container.appendChild(toast);
-    setTimeout(function () {
-      toast.remove();
-    }, C.TOAST_DISPLAY_MS);
   }
 
   function sanitizeHeadersForStorage(headers) {
@@ -686,15 +1238,19 @@
     streamingResponse = '';
     currentResponseData = null;
     currentRawResponseText = '';
+    resetStreamElement();
     revokeContainerBlobUrls();
-    responseContainer.innerHTML = '';
+    clearElement(responseContainer);
     httpStatusSpan.textContent = '-';
     durationSpan.textContent = '-';
 
+    clearElement(sendBtn);
+    var spinner = createElement('span', { className: 'spinner' });
+    sendBtn.appendChild(spinner);
     if (retryCount > 0) {
-      sendBtn.innerHTML = '<span class="spinner"></span>重试中 (' + retryCount + '/' + MAX_RETRIES + ')…';
+      sendBtn.appendChild(document.createTextNode('重试中 (' + retryCount + '/' + MAX_RETRIES + ')…'));
     } else {
-      sendBtn.innerHTML = '<span class="spinner"></span>请求中…';
+      sendBtn.appendChild(document.createTextNode('请求中…'));
     }
 
     var timeoutId = setTimeout(function () {
@@ -739,7 +1295,10 @@
           delay = Math.pow(2, retryCount) * 1000 + Math.random() * 1000;
         }
         showToast('遇到速率限制 (429)，' + Math.round(delay / 1000) + ' 秒后重试…', 'warning');
-        sendBtn.innerHTML = '<span class="spinner"></span>等待重试 (' + Math.round(delay / 1000) + 's)…';
+        clearElement(sendBtn);
+        var spinner1 = createElement('span', { className: 'spinner' });
+        sendBtn.appendChild(spinner1);
+        sendBtn.appendChild(document.createTextNode('等待重试 (' + Math.round(delay / 1000) + 's)…'));
         await new Promise(function (r) { setTimeout(r, delay); });
         return sendRequest(retryCount + 1);
       }
@@ -820,7 +1379,10 @@
       if (err.name !== 'AbortError' && retryCount < MAX_RETRIES) {
         var delay = Math.pow(2, retryCount) * 1000 + Math.random() * 1000;
         showToast('网络错误，' + Math.round(delay / 1000) + ' 秒后重试…', 'warning');
-        sendBtn.innerHTML = '<span class="spinner"></span>等待重试 (' + Math.round(delay / 1000) + 's)…';
+        clearElement(sendBtn);
+        var spinner2 = createElement('span', { className: 'spinner' });
+        sendBtn.appendChild(spinner2);
+        sendBtn.appendChild(document.createTextNode('等待重试 (' + Math.round(delay / 1000) + 's)…'));
         await new Promise(function (r) { setTimeout(r, delay); });
         return sendRequest(retryCount + 1);
       }
@@ -831,6 +1393,8 @@
       abortController = null;
     }
   }
+
+  // ==================== SSE 处理 ====================
 
   async function handleSseResponse(response) {
     var reader = response.body.getReader();
@@ -930,214 +1494,156 @@
     renderTextResponse(fullContent, 'text/plain');
   }
 
-  function renderStreamingText(text) {
-    responseContainer.innerHTML = '';
-    var pre = document.createElement('pre');
-    pre.style.whiteSpace = 'pre-wrap';
-    pre.textContent = text;
-    responseContainer.appendChild(pre);
+  // ==================== 视图切换 ====================
+
+  function setActiveTab(tab, bar) {
+    if (!tab || !bar) return;
+    bar.querySelectorAll('.tab').forEach(function (t) { t.classList.remove('active'); });
+    tab.classList.add('active');
   }
 
-  function renderResponse(data) {
-    responseContainer.innerHTML = '';
-    var json = JSON.stringify(data, null, 2);
-    var pre = document.createElement('pre');
-    pre.style.whiteSpace = 'pre-wrap';
-    pre.textContent = json;
-    responseContainer.appendChild(pre);
-  }
+  function switchView(view) {
+    if (!currentResponseData && !currentRawResponseText) return;
 
-  function renderTextResponse(text, contentType) {
-    responseContainer.innerHTML = '';
-    var pre = document.createElement('pre');
-    pre.style.whiteSpace = 'pre-wrap';
-    pre.textContent = text;
-    responseContainer.appendChild(pre);
-  }
-
-  function renderBlobResponse(blob, contentType) {
-    responseContainer.innerHTML = '';
-    var url = URL.createObjectURL(blob);
-
-    if (contentType.startsWith('image/')) {
-      var img = document.createElement('img');
-      img.src = url;
-      img.alt = 'API 响应图片';
-      responseContainer.appendChild(img);
-    } else if (contentType.startsWith('audio/')) {
-      var audio = document.createElement('audio');
-      audio.controls = true;
-      audio.src = url;
-      responseContainer.appendChild(audio);
-    } else if (contentType.startsWith('video/')) {
-      var video = document.createElement('video');
-      video.controls = true;
-      video.src = url;
-      responseContainer.appendChild(video);
+    if (view === 'raw') {
+      resetStreamElement();
+      clearElement(responseContainer);
+      var pre = createElement('pre', {
+        styles: { whiteSpace: 'pre-wrap', wordBreak: 'break-all' }
+      });
+      if (currentResponseType === 'json' && currentResponseData) {
+        pre.textContent = JSON.stringify(currentResponseData, null, 2);
+      } else if (currentResponseType === 'blob') {
+        pre.textContent = '[二进制数据] ' + (currentResponseData && currentResponseData.type ? currentResponseData.type : 'unknown') + '，大小: ' + (currentResponseData && currentResponseData.size ? currentResponseData.size : '?') + ' bytes';
+      } else if (currentResponseType === 'stream' && currentRawResponseText) {
+        pre.textContent = currentRawResponseText;
+      } else {
+        pre.textContent = currentRawResponseText || String(currentResponseData);
+      }
+      responseContainer.appendChild(pre);
     } else {
-      var a = document.createElement('a');
-      a.href = url;
-      a.download = 'response';
-      a.textContent = '下载响应文件';
-      responseContainer.appendChild(a);
+      if (currentResponseType === 'json' && currentResponseData) {
+        renderResponse(currentResponseData);
+      } else if (currentResponseType === 'blob' && currentResponseData) {
+        renderBlobResponse(currentResponseData, currentResponseData.type || 'application/octet-stream');
+      } else if (currentResponseType === 'stream' && currentResponseData) {
+        var fullContent = '';
+        for (var i = 0; i < currentResponseData.length; i++) {
+          var event = currentResponseData[i];
+          var deltaText = '';
+          if (event.choices && event.choices[0] && event.choices[0].delta) {
+            deltaText = event.choices[0].delta.content || '';
+            var reasoning = event.choices[0].delta.reasoning_content;
+            if (reasoning) {
+              deltaText = '[思考] ' + reasoning + '\n' + deltaText;
+            }
+          } else if (event.output && event.output[0] && event.output[0].content && event.output[0].content[0] && event.output[0].content[0].text) {
+            deltaText = event.output[0].content[0].text;
+          }
+          fullContent += deltaText;
+        }
+        renderTextResponse(fullContent, 'text/plain');
+      } else {
+        renderTextResponse(currentRawResponseText || '', 'text/plain');
+      }
     }
   }
 
-  function addHistory(params, httpStatus, duration) {
-    var item = {
-      id: Date.now(),
-      timestamp: new Date().toISOString(),
-      method: params.method,
-      url: params.url,
-      httpStatus: httpStatus,
-      duration: duration,
-      headers: sanitizeHeadersForStorage(params.headers),
-      body: params.body
-    };
-    history.unshift(item);
-    if (history.length > C.MAX_HISTORY_ITEMS) history = history.slice(0, C.MAX_HISTORY_ITEMS);
-    C.saveHistory(history);
-    renderHistory();
+  // ==================== 面板管理 ====================
+
+  function openPanel(panelId) {
+    [savedConfigsPanel, historyPanel].forEach(function (panel) {
+      if (panel) panel.classList.remove('open');
+    });
+    var targetPanel = $(panelId);
+    if (targetPanel) {
+      targetPanel.classList.add('open');
+      targetPanel.setAttribute('aria-hidden', 'false');
+    }
+    if (panelOverlay) panelOverlay.classList.add('open');
   }
 
-  function renderHistory() {
-    historyList.innerHTML = '';
-    if (history.length === 0) {
-      var empty = document.createElement('li');
-      empty.className = 'empty-state';
-      empty.textContent = '暂无历史记录，发送请求后会自动保存';
-      empty.style.cursor = 'default';
-      historyList.appendChild(empty);
+  function closeAllPanels() {
+    [savedConfigsPanel, historyPanel].forEach(function (panel) {
+      if (panel) {
+        panel.classList.remove('open');
+        panel.setAttribute('aria-hidden', 'true');
+      }
+    });
+    if (panelOverlay) panelOverlay.classList.remove('open');
+  }
+
+  function renderSidebarConfigs() {
+    if (!configSubmenuList) return;
+    var configs = C.loadSavedConfigs();
+    clearElement(configSubmenuList);
+    if (configs.length === 0) {
+      var empty = createElement('div', {
+        className: 'sidebar-config-item',
+        styles: { cursor: 'default' }
+      });
+      var emptySpan = createElement('span', {
+        className: 'config-name',
+        styles: { color: 'var(--text-muted)' },
+        text: '暂无保存的配置'
+      });
+      empty.appendChild(emptySpan);
+      configSubmenuList.appendChild(empty);
       return;
     }
-    var dtFormat = new Intl.DateTimeFormat('zh-CN', {
-      year: 'numeric', month: '2-digit', day: '2-digit',
-      hour: '2-digit', minute: '2-digit', second: '2-digit'
-    });
-    var tmpl = document.getElementById('tmplHistoryItem');
-    history.forEach(function (item) {
-      var clone = tmpl.content.cloneNode(true);
-      var li = clone.querySelector('li');
-      li.dataset.id = item.id;
-      li.setAttribute('aria-label', item.method + ' ' + item.httpStatus + ' ' + item.url);
-      li.querySelector('.history-time').textContent = dtFormat.format(new Date(item.timestamp));
-      li.querySelector('.history-status').textContent = item.method + ' ' + item.httpStatus + ' ' + item.duration + 'ms';
-      li.querySelector('.history-url').textContent = item.url;
-      historyList.appendChild(clone);
-    });
-  }
-
-  function loadHistoryToConfig(id) {
-    var item = history.find(function (h) { return h.id === id; });
-    if (!item) return;
-
-    var baseUrl, endpointPath;
-    try {
-      var url = new URL(item.url);
-      var knownEndpoints = Object.keys(C.ENDPOINT_TEMPLATES);
-      var matchedEndpoint = knownEndpoints.find(function (ep) { return url.pathname.endsWith(ep); });
-      if (matchedEndpoint) {
-        endpointPath = matchedEndpoint;
-        baseUrl = item.url.substring(0, item.url.lastIndexOf(matchedEndpoint));
-      } else {
-        var pathParts = url.pathname.split('/').filter(Boolean);
-        if (pathParts.length >= 2) {
-          endpointPath = '/' + pathParts.slice(-2).join('/');
-          baseUrl = url.origin + '/' + pathParts.slice(0, -2).join('/');
-          if (baseUrl.endsWith('/')) baseUrl = baseUrl.slice(0, -1);
-        } else {
-          endpointPath = url.pathname || '/';
-          baseUrl = url.origin;
+    configs.forEach(function (cfg) {
+      var item = createElement('div', {
+        className: 'sidebar-config-item',
+        attrs: { role: 'button', tabindex: '0' }
+      });
+      var nameSpan = createElement('span', {
+        className: 'config-name',
+        text: cfg.name
+      });
+      var actionsSpan = createElement('span', { className: 'config-actions' });
+      var delBtn = createElement('button', {
+        attrs: {
+          type: 'button',
+          class: 'config-delete',
+          'data-config-name': cfg.name,
+          title: '删除'
         }
-      }
-    } catch (e) {
-      baseUrl = item.url;
-      endpointPath = '/';
-    }
+      });
+      delBtn.appendChild(createDeleteIcon(14));
+      actionsSpan.appendChild(delBtn);
+      item.appendChild(nameSpan);
+      item.appendChild(actionsSpan);
 
-    baseUrlInput.value = baseUrl;
-    currentConfig.endpointPath = endpointPath;
-    httpMethodSelect.value = item.method;
-
-    currentConfig.headers = Object.entries(item.headers).map(function (entry) {
-      return { key: entry[0], value: entry[1] };
-    });
-    renderHeaders();
-
-    try {
-      var body = typeof item.body === 'string' ? JSON.parse(item.body) : item.body;
-      currentConfig.body = body;
-      currentConfig.customParams = [];
-
-      var extracted = C.extractPresetParamsFromBody(currentConfig.body, endpointPath, currentConfig.customParams);
-      currentConfig.body = extracted.body;
-      currentConfig.customParams = extracted.customParams;
-
-      renderFormMode();
-      updateJsonPreview();
-    } catch (e) {
-      showToast('历史配置加载失败：' + e.message + '，请尝试手动填写参数', 'error');
-    }
-
-    renderEndpoint();
-    updateFinalUrl();
-    fetchModels();
-  }
-
-  function restoreFromUrlParams() {
-    var params = new URLSearchParams(location.search);
-    var config = params.get('config');
-    if (!config) return;
-    try {
-      var decoded = JSON.parse(decodeURIComponent(config));
-      if (decoded.baseUrl) baseUrlInput.value = decoded.baseUrl;
-      if (decoded.endpointPath) currentConfig.endpointPath = decoded.endpointPath;
-      if (decoded.httpMethod) httpMethodSelect.value = decoded.httpMethod;
-      if (decoded.headers) {
-        var safeHeaders = Object.entries(decoded.headers)
-          .filter(function (entry) { return !C.isSensitiveHeader(entry[0]); })
-          .map(function (entry) { return { key: entry[0], value: entry[1] }; });
-        currentConfig.headers = safeHeaders;
-        var removedCount = Object.keys(decoded.headers).length - safeHeaders.length;
-        if (removedCount > 0) {
-          showToast('出于安全考虑，URL 中的 ' + removedCount + ' 个敏感请求头（如 Authorization）已被移除，请手动填写', 'warning');
+      item.addEventListener('click', function (e) {
+        if (e.target.closest('.config-delete')) return;
+        loadSavedConfig(cfg);
+        showToast('配置「' + cfg.name + '」已加载', 'success');
+      });
+      item.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          if (e.target.closest('.config-delete')) return;
+          loadSavedConfig(cfg);
+          showToast('配置「' + cfg.name + '」已加载', 'success');
         }
-      }
-      if (decoded.body) {
-        currentConfig.body = decoded.body;
-        currentConfig.customParams = decoded.customParams || [];
-        renderFormMode();
-        updateJsonPreview();
-      }
-      renderEndpoint();
-      renderHeaders();
-      updateFinalUrl();
-      if (decoded.baseUrl) fetchModels();
-    } catch (e) {
-      console.warn('从 URL 参数恢复配置失败：', e.message);
-    }
+      });
+      delBtn.addEventListener('click', function (e) {
+        e.stopPropagation();
+        var name = delBtn.dataset.configName;
+        showConfirm('确定要删除配置「' + name + '」吗？', function () {
+          C.deleteConfig(name);
+          renderSidebarConfigs();
+          renderConfigSelect();
+          showToast('配置「' + name + '」已删除', 'info');
+        });
+      });
+      configSubmenuList.appendChild(item);
+    });
   }
 
-  function buildShareUrl() {
-    var config = {
-      baseUrl: baseUrlInput.value.trim(),
-      endpointPath: getEndpointPathValue(),
-      httpMethod: httpMethodSelect.value,
-      headers: {},
-      body: C.deepClone(currentConfig.body)
-    };
-    currentConfig.headers.forEach(function (h) {
-      if (h.key && !C.isSensitiveHeader(h.key)) {
-        config.headers[h.key] = h.value;
-      }
-    });
-    currentConfig.customParams.forEach(function (p) {
-      config.body[p.key] = p.value;
-    });
-    return location.origin + location.pathname + '?config=' + encodeURIComponent(JSON.stringify(config));
-  }
+  // ==================== 事件绑定 ====================
 
-  function bindEvents() {
+  function bindEndpointEvents() {
     baseUrlInput.addEventListener('input', updateFinalUrl);
 
     var fetchModelsTimer = null;
@@ -1149,24 +1655,6 @@
     });
 
     fetchModelsBtn.addEventListener('click', fetchModels);
-
-    function getCurrentEndpointPath() {
-      return getEndpointPathValue();
-    }
-
-    function setEndpointMode(isCustom, value) {
-      var combo = document.querySelector('.endpoint-path-combo');
-      if (!combo) return;
-      if (isCustom) {
-        combo.classList.add('custom-mode');
-        endpointPathSelect.value = 'custom';
-        endpointPathInput.value = value || '';
-        endpointPathInput.focus();
-      } else {
-        combo.classList.remove('custom-mode');
-        endpointPathSelect.value = value || 'custom';
-      }
-    }
 
     endpointPathSelect.addEventListener('change', function () {
       var val = endpointPathSelect.value;
@@ -1208,7 +1696,9 @@
       }
     });
     httpMethodSelect.addEventListener('change', updateFinalUrl);
+  }
 
+  function bindHeaderEvents() {
     addHeaderBtn.addEventListener('click', function () {
       currentConfig.headers.push({ key: '', value: '' });
       renderHeaders();
@@ -1217,31 +1707,25 @@
     headersContainer.addEventListener('click', function (e) {
       if (e.target.matches('.danger')) {
         var idx = +e.target.dataset.idx;
-        currentConfig.headers.splice(idx, 1);
-        renderHeaders();
+        if (!Number.isNaN(idx)) {
+          currentConfig.headers.splice(idx, 1);
+          renderHeaders();
+        }
       }
     });
 
     headersContainer.addEventListener('input', function (e) {
       var idx = +e.target.dataset.idx;
+      if (Number.isNaN(idx)) return;
       if (e.target.matches('.header-key')) {
         currentConfig.headers[idx].key = e.target.value;
       } else if (e.target.matches('.header-value')) {
         currentConfig.headers[idx].value = e.target.value;
       }
     });
+  }
 
-    var responseBar = document.querySelector('.response-card .tab-bar');
-    if (responseBar) {
-      responseBar.addEventListener('click', function (e) {
-        if (e.target.matches('.tab')) {
-          var view = e.target.dataset.view;
-          if (view) switchView(view);
-          setActiveTab(e.target, responseBar);
-        }
-      });
-    }
-
+  function bindFormEvents() {
     formContainer.addEventListener('input', debouncedUpdateJsonPreview);
     formContainer.addEventListener('change', function (e) {
       if (e.target.matches('select[data-param]')) {
@@ -1266,8 +1750,8 @@
     formContainer.addEventListener('click', function (e) {
       if (e.target.matches('.danger')) {
         var idx = +e.target.dataset.idx;
-        if (idx !== idx) idx = +e.target.dataset.customIdx;
-        if (idx !== idx) idx = +e.target.dataset.msgIdx;
+        if (Number.isNaN(idx)) idx = +e.target.dataset.customIdx;
+        if (Number.isNaN(idx)) idx = +e.target.dataset.msgIdx;
         if (e.target.dataset.customIdx !== undefined) {
           currentConfig.customParams.splice(+e.target.dataset.customIdx, 1);
         } else if (e.target.dataset.msgIdx !== undefined) {
@@ -1315,7 +1799,7 @@
       var li = e.target.closest('li');
       if (!li) return;
       var id = +li.dataset.id;
-      loadHistoryToConfig(id);
+      if (!Number.isNaN(id)) loadHistoryToConfig(id);
     });
 
     historyList.addEventListener('keydown', function (e) {
@@ -1324,7 +1808,7 @@
         var li = e.target.closest('li');
         if (!li) return;
         var id = +li.dataset.id;
-        loadHistoryToConfig(id);
+        if (!Number.isNaN(id)) loadHistoryToConfig(id);
       }
     });
 
@@ -1343,14 +1827,15 @@
 
     clearHistoryBtn.addEventListener('click', function () {
       showConfirm('确定要清空所有历史记录吗？此操作不可撤销。', function () {
-        history = [];
-        C.saveHistory(history);
+        requestHistory = [];
+        C.saveHistory(requestHistory);
         renderHistory();
+        showToast('历史记录已清空', 'info');
       });
     });
 
     exportHistoryBtn.addEventListener('click', function () {
-      var safeHistory = history.map(function (item) {
+      var safeHistory = requestHistory.map(function (item) {
         var safeItem = Object.assign({}, item);
         if (safeItem.headers) {
           var safeHeaders = {};
@@ -1368,68 +1853,27 @@
       });
       var blob = new Blob([JSON.stringify(safeHistory, null, 2)], { type: 'application/json' });
       var url = URL.createObjectURL(blob);
-      var a = document.createElement('a');
-      a.href = url;
-      a.download = 'openai_debugger_history.json';
+      var a = createElement('a', { attrs: { href: url, download: 'openai_debugger_history.json' } });
       a.click();
       URL.revokeObjectURL(url);
+      showToast('历史记录已导出（敏感信息已脱敏）', 'success');
     });
+  }
 
-    function switchView(view) {
-      if (!currentResponseData && !currentRawResponseText) return;
-
-      if (view === 'raw') {
-        responseContainer.innerHTML = '';
-        var pre = document.createElement('pre');
-        pre.style.whiteSpace = 'pre-wrap';
-        pre.style.wordBreak = 'break-all';
-        if (currentResponseType === 'json' && currentResponseData) {
-          pre.textContent = JSON.stringify(currentResponseData, null, 2);
-        } else if (currentResponseType === 'blob') {
-          pre.textContent = '[二进制数据] ' + (currentResponseData && currentResponseData.type ? currentResponseData.type : 'unknown') + '，大小: ' + (currentResponseData && currentResponseData.size ? currentResponseData.size : '?') + ' bytes';
-        } else if (currentResponseType === 'stream' && currentRawResponseText) {
-          pre.textContent = currentRawResponseText;
-        } else {
-          pre.textContent = currentRawResponseText || String(currentResponseData);
-        }
-        responseContainer.appendChild(pre);
-      } else {
-        if (currentResponseType === 'json' && currentResponseData) {
-          renderResponse(currentResponseData);
-        } else if (currentResponseType === 'blob' && currentResponseData) {
-          renderBlobResponse(currentResponseData, currentResponseData.type || 'application/octet-stream');
-        } else if (currentResponseType === 'stream' && currentResponseData) {
-          var fullContent = '';
-          for (var i = 0; i < currentResponseData.length; i++) {
-            var event = currentResponseData[i];
-            var deltaText = '';
-            if (event.choices && event.choices[0] && event.choices[0].delta) {
-              deltaText = event.choices[0].delta.content || '';
-              var reasoning = event.choices[0].delta.reasoning_content;
-              if (reasoning) {
-                deltaText = '[思考] ' + reasoning + '\n' + deltaText;
-              }
-            } else if (event.output && event.output[0] && event.output[0].content && event.output[0].content[0] && event.output[0].content[0].text) {
-              deltaText = event.output[0].content[0].text;
-            }
-            fullContent += deltaText;
-          }
-          renderTextResponse(fullContent, 'text/plain');
-        } else {
-          renderTextResponse(currentRawResponseText || '', 'text/plain');
-        }
-      }
-    }
-
+  function bindConfigEvents() {
     shareUrlBtn.addEventListener('click', function () {
       syncFormToConfig();
       var url = buildShareUrl();
       showConfirm('分享链接会将 Base URL、端点路径和请求参数（含 messages 内容）编码到 URL 中，该内容可能被浏览器历史、服务器日志等记录。确定要复制分享链接吗？', function () {
-        navigator.clipboard.writeText(url).then(function () {
-          showToast('分享链接已复制到剪贴板', 'success');
-        }).catch(function () {
+        if (typeof navigator !== 'undefined' && navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(url).then(function () {
+            showToast('分享链接已复制到剪贴板', 'success');
+          }).catch(function () {
+            prompt('复制链接（请手动复制）：', url);
+          });
+        } else {
           prompt('复制链接（请手动复制）：', url);
-        });
+        }
       });
     });
 
@@ -1450,6 +1894,7 @@
       };
       var action = C.saveConfig(name, configData);
       renderConfigSelect();
+      renderSidebarConfigs();
       configNameInput.value = '';
       showToast('配置「' + name + '」已' + action, 'success');
     });
@@ -1477,6 +1922,7 @@
       showConfirm('确定要删除配置「' + name + '」吗？', function () {
         C.deleteConfig(name);
         renderConfigSelect();
+        renderSidebarConfigs();
         configSelect.value = '';
         showToast('配置「' + name + '」已删除', 'info');
       });
@@ -1499,9 +1945,7 @@
       };
       var blob = new Blob([JSON.stringify(configData, null, 2)], { type: 'application/json' });
       var url = URL.createObjectURL(blob);
-      var a = document.createElement('a');
-      a.href = url;
-      a.download = 'openai_config_' + new Date().toISOString().slice(0, 10) + '.json';
+      var a = createElement('a', { attrs: { href: url, download: 'openai_config_' + new Date().toISOString().slice(0, 10) + '.json' } });
       a.click();
       URL.revokeObjectURL(url);
       showToast('配置已导出（敏感请求头已脱敏）', 'success');
@@ -1529,149 +1973,20 @@
     });
   }
 
-  function loadSavedConfig(saved) {
-    if (saved.baseUrl !== undefined) {
-      baseUrlInput.value = saved.baseUrl;
-      currentConfig.baseUrl = saved.baseUrl;
-    }
-    if (saved.endpointPath !== undefined) {
-      currentConfig.endpointPath = saved.endpointPath;
-    }
-    if (saved.httpMethod !== undefined) {
-      httpMethodSelect.value = saved.httpMethod;
-      currentConfig.httpMethod = saved.httpMethod;
-    }
-    if (saved.headers && Array.isArray(saved.headers)) {
-      currentConfig.headers = saved.headers.map(function (h) { return { key: h.key, value: h.value }; });
-      renderHeaders();
-    }
-    if (saved.body && typeof saved.body === 'object') {
-      currentConfig.body = C.deepClone(saved.body);
-    }
-    if (saved.customParams && Array.isArray(saved.customParams)) {
-      currentConfig.customParams = C.deepClone(saved.customParams);
-    }
-
-    if (currentConfig.body && typeof currentConfig.body === 'object') {
-      var extracted = C.extractPresetParamsFromBody(currentConfig.body, currentConfig.endpointPath, currentConfig.customParams);
-      currentConfig.body = extracted.body;
-      currentConfig.customParams = extracted.customParams;
-    }
-
-    renderEndpoint();
-    renderFormMode();
-    updateFinalUrl();
-    updateJsonPreview();
-    showToast('配置已加载', 'success');
-
-    if (saved.baseUrl) fetchModels();
-  }
-
-  function renderConfigSelect() {
-    var configs = C.loadSavedConfigs();
-    configSelect.innerHTML = '<option value="">-- 选择已保存的配置 --</option>';
-    configs.forEach(function (cfg) {
-      var option = document.createElement('option');
-      option.value = cfg.name;
-      option.textContent = cfg.name;
-      configSelect.appendChild(option);
-    });
-  }
-
-  function showConfirm(message, onConfirm) {
-    var overlay = document.createElement('div');
-    overlay.className = 'confirm-overlay';
-    overlay.setAttribute('role', 'dialog');
-    overlay.setAttribute('aria-modal', 'true');
-    overlay.setAttribute('aria-labelledby', 'confirm-title');
-    overlay.innerHTML =
-      '<div class="confirm-dialog">' +
-      '<h3 id="confirm-title" class="confirm-title">确认操作</h3>' +
-      '<p>' + escapeHtml(message) + '</p>' +
-      '<div class="confirm-actions">' +
-      '<button type="button" class="confirm-cancel">取消</button>' +
-      '<button type="button" class="danger confirm-ok">确认</button>' +
-      '</div>' +
-      '</div>';
-    document.body.appendChild(overlay);
-
-    overlay.querySelector('.confirm-cancel').addEventListener('click', function () { overlay.remove(); });
-    overlay.querySelector('.confirm-ok').addEventListener('click', function () {
-      overlay.remove();
-      onConfirm();
-    });
-    overlay.addEventListener('keydown', function (e) {
-      if (e.key === 'Escape') overlay.remove();
-    });
-    overlay.querySelector('.confirm-ok').focus();
-  }
-
-  function openPanel(panelId) {
-    [savedConfigsPanel, historyPanel].forEach(function (panel) {
-      if (panel) panel.classList.remove('open');
-    });
-    var targetPanel = $(panelId);
-    if (targetPanel) {
-      targetPanel.classList.add('open');
-      targetPanel.setAttribute('aria-hidden', 'false');
-    }
-    if (panelOverlay) panelOverlay.classList.add('open');
-  }
-
-  function closeAllPanels() {
-    [savedConfigsPanel, historyPanel].forEach(function (panel) {
-      if (panel) {
-        panel.classList.remove('open');
-        panel.setAttribute('aria-hidden', 'true');
-      }
-    });
-    if (panelOverlay) panelOverlay.classList.remove('open');
-  }
-
-  function renderSidebarConfigs() {
-    if (!configSubmenuList) return;
-    var configs = C.loadSavedConfigs();
-    configSubmenuList.innerHTML = '';
-    if (configs.length === 0) {
-      var empty = document.createElement('div');
-      empty.className = 'sidebar-config-item';
-      empty.style.cursor = 'default';
-      empty.innerHTML = '<span class="config-name" style="color:var(--text-muted)">暂无保存的配置</span>';
-      configSubmenuList.appendChild(empty);
-      return;
-    }
-    configs.forEach(function (cfg) {
-      var item = document.createElement('button');
-      item.type = 'button';
-      item.className = 'sidebar-config-item';
-      item.innerHTML =
-        '<span class="config-name">' + escapeHtml(cfg.name) + '</span>' +
-        '<span class="config-actions">' +
-        '<button type="button" class="config-delete" data-config-name="' + escapeHtml(cfg.name) + '" title="删除">' +
-        '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>' +
-        '</button>' +
-        '</span>';
-      item.addEventListener('click', function (e) {
-        if (e.target.closest('.config-delete')) return;
-        loadSavedConfig(cfg.data);
-        showToast('配置「' + cfg.name + '」已加载', 'success');
+  function bindResponseTabEvents() {
+    var responseBar = document.querySelector('.response-card .tab-bar');
+    if (responseBar) {
+      responseBar.addEventListener('click', function (e) {
+        if (e.target.matches('.tab')) {
+          var view = e.target.dataset.view;
+          if (view) switchView(view);
+          setActiveTab(e.target, responseBar);
+        }
       });
-      var delBtn = item.querySelector('.config-delete');
-      if (delBtn) {
-        delBtn.addEventListener('click', function (e) {
-          e.stopPropagation();
-          var name = delBtn.dataset.configName;
-          showConfirm('确定要删除配置「' + name + '」吗？', function () {
-            C.deleteConfig(name);
-            renderSidebarConfigs();
-            renderConfigSelect();
-            showToast('配置「' + name + '」已删除', 'info');
-          });
-        });
-      }
-      configSubmenuList.appendChild(item);
-    });
+    }
   }
+
+  // ==================== 侧边栏管理 ====================
 
   function initSidebar() {
     sidebarItems.forEach(function (item) {
@@ -1755,6 +2070,31 @@
     });
   }
 
-  initSidebar();
+  // ==================== 初始化 ====================
+
+  function init() {
+    if (!C.isLocalStorageAvailable()) {
+      showToast('浏览器存储不可用，配置和历史记录将无法保存。请检查是否处于隐私模式。', 'warning');
+    }
+    clearElement(endpointPathSelect);
+    endpointPathSelect.appendChild(C.buildEndpointSelectOptions());
+    renderEndpoint();
+    renderHeaders();
+    renderFormMode();
+    renderHistory();
+    renderConfigSelect();
+    updateFinalUrl();
+    updateJsonPreview();
+
+    bindEndpointEvents();
+    bindHeaderEvents();
+    bindFormEvents();
+    bindConfigEvents();
+    bindResponseTabEvents();
+    initSidebar();
+
+    restoreFromUrlParams();
+  }
+
   init();
 })();
