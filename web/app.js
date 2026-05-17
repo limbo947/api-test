@@ -73,6 +73,9 @@
   var currentRawResponseText = '';
   var fetchedModels = [];
 
+  var uploadedFiles = [];
+  var currentUploadType = 'image';
+
   var $ = function (id) { return document.getElementById(id); };
 
   // ==================== DOM 元素缓存 ====================
@@ -127,6 +130,13 @@
   var configSubmenuList = $('configSubmenuList');
   var quickConfigName = $('quickConfigName');
   var quickSaveConfigBtn = $('quickSaveConfigBtn');
+
+  var fileInput = $('fileInput');
+  var uploadDropzone = $('uploadDropzone');
+  var uploadPreview = $('uploadPreview');
+  var uploadHint = $('uploadHint');
+  var clearFilesBtn = $('clearFilesBtn');
+  var insertFilesBtn = $('insertFilesBtn');
 
   // ==================== 安全的 DOM 创建工具 ====================
 
@@ -305,7 +315,10 @@
 
     var headers = {};
     currentConfig.headers.forEach(function (h) {
-      if (h.key) headers[h.key] = h.value;
+      if (!h.key) return;
+      var sanitizedKey = h.key.replace(/[\r\n]/g, '');
+      var sanitizedValue = String(h.value || '').replace(/[\r\n]/g, '');
+      if (sanitizedKey) headers[sanitizedKey] = sanitizedValue;
     });
 
     modelFetchStatus.textContent = '正在获取模型列表…';
@@ -470,6 +483,10 @@
   }
 
   function jsonToFullConfig(json) {
+    var backupConfig = C.deepClone(currentConfig);
+    var backupBaseUrl = baseUrlInput.value;
+    var backupHttpMethod = httpMethodSelect.value;
+
     try {
       var fullConfig = JSON.parse(json);
 
@@ -517,6 +534,9 @@
       jsonError.textContent = '';
       return true;
     } catch (e) {
+      currentConfig = backupConfig;
+      baseUrlInput.value = backupBaseUrl;
+      httpMethodSelect.value = backupHttpMethod;
       jsonError.textContent = 'JSON 解析错误：' + e.message + '，请检查括号、引号是否匹配';
       return false;
     }
@@ -539,6 +559,11 @@
     _syncSource = 'json';
     try {
       var json = requestJson.value;
+      var jsonSize = new Blob([json]).size;
+      if (jsonSize > 1024 * 1024) {
+        jsonError.textContent = 'JSON 体积过大（' + (jsonSize / 1024 / 1024).toFixed(1) + 'MB），可能导致浏览器卡顿，建议减少数据量';
+        return;
+      }
       if (jsonToFullConfig(json)) {
         jsonError.textContent = '';
       }
@@ -568,8 +593,8 @@
     var base = baseUrlInput.value.trim().replace(/\/+$/, '');
     var rawPath = getEndpointPathValue();
     var path = rawPath.replace(/^\/+/, '/');
-    if (path === 'custom') path = '';
-    var url = base ? (base + (path ? '/' + path : '')) : '';
+    if (!path || path === '/') path = '';
+    var url = base ? (base + (path && path !== '/' ? '/' + path.replace(/^\//, '') : '')) : '';
     finalUrlSpan.textContent = url;
   }
 
@@ -612,7 +637,7 @@
     var params = C.getEndpointParams(endpointPath);
 
     var tip = createElement('div', {
-      styles: { fontSize: '0.8rem', color: '#9ca3af' }
+      className: 'form-tip'
     });
     if (endpointPath === '/responses') {
       tip.appendChild(document.createTextNode('Responses API 使用 input 字段代替 messages。如需编辑复杂 input 数组或工具调用，建议切换到 '));
@@ -627,7 +652,7 @@
     formContainer.appendChild(tip);
 
     if (params.length > 0) {
-      var paramsDiv = createElement('div');
+      var paramsDiv = createElement('div', { className: 'params-section' });
       params.forEach(function (p) {
         var value = currentConfig.body && currentConfig.body[p.name];
         var row = createElement('div', { className: 'param-row' });
@@ -707,7 +732,7 @@
             },
             styles: {
               display: isCustom ? '' : 'none',
-              marginTop: '0.25rem'
+              marginTop: 'var(--space-1)'
             }
           });
           if (isCustom) customInput.value = String(val);
@@ -716,9 +741,13 @@
             attrs: { title: p.description || '' },
             text: p.description || ''
           });
+          var selectWrapper = createElement('div', {
+            styles: { display: 'flex', flexDirection: 'column', gap: 'var(--space-1)', minWidth: '0' }
+          });
+          selectWrapper.appendChild(select);
+          selectWrapper.appendChild(customInput);
           row.appendChild(selectLabel);
-          row.appendChild(select);
-          row.appendChild(customInput);
+          row.appendChild(selectWrapper);
           row.appendChild(selectDesc);
         } else {
           var textLabel = createElement('label', {
@@ -758,7 +787,7 @@
 
     if (hasMessages) {
       var messages = (currentConfig.body && currentConfig.body.messages) || [];
-      var msgDiv = createElement('div');
+      var msgDiv = createElement('div', { className: 'msg-section' });
       var msgTitle = createElement('h3', { text: 'messages' });
       msgDiv.appendChild(msgTitle);
       var msgTmpl = document.getElementById('tmplMsgRow');
@@ -783,7 +812,9 @@
       });
 
       var addMsgBtn = createElement('button', {
+        className: 'secondary',
         attrs: { type: 'button' },
+        styles: { marginTop: 'var(--space-3)' },
         text: '+ 添加消息',
         events: {
           click: function () {
@@ -797,7 +828,7 @@
       formContainer.appendChild(msgDiv);
     }
 
-    var customDiv = createElement('div');
+    var customDiv = createElement('div', { className: 'custom-params-section' });
     var customTitle = createElement('h3', { text: '自定义参数' });
     customDiv.appendChild(customTitle);
 
@@ -820,12 +851,16 @@
       updateJsonPreview();
       presetSelect.value = '';
     });
-    var presetRow = createElement('div', { className: 'param-row' });
+    var presetRow = createElement('div', { className: 'param-row preset-row' });
+    var presetLabel = createElement('label', { text: '添加预设' });
+    var presetPlaceholder = createElement('span');
+    presetRow.appendChild(presetLabel);
     presetRow.appendChild(presetSelect);
+    presetRow.appendChild(presetPlaceholder);
     customDiv.appendChild(presetRow);
 
     currentConfig.customParams.forEach(function (p, idx) {
-      var row = createElement('div', { className: 'param-row' });
+      var row = createElement('div', { className: 'param-row custom-param-row' });
       var preset = C.CUSTOM_PARAM_PRESETS.find(function (cp) { return cp.key === p.key; });
       var desc = preset ? preset.description : '';
       var keyInput = createElement('input', {
@@ -925,7 +960,7 @@
     if (!_streamPreElement) {
       clearElement(responseContainer);
       _streamPreElement = createElement('pre', {
-        styles: { whiteSpace: 'pre-wrap', wordBreak: 'break-all' }
+        className: 'response-pre'
       });
       responseContainer.appendChild(_streamPreElement);
     }
@@ -941,7 +976,7 @@
     clearElement(responseContainer);
     var json = JSON.stringify(data, null, 2);
     var pre = createElement('pre', {
-      styles: { whiteSpace: 'pre-wrap', wordBreak: 'break-all' },
+      className: 'response-pre',
       text: json
     });
     responseContainer.appendChild(pre);
@@ -951,7 +986,7 @@
     resetStreamElement();
     clearElement(responseContainer);
     var pre = createElement('pre', {
-      styles: { whiteSpace: 'pre-wrap', wordBreak: 'break-all' },
+      className: 'response-pre',
       text: text
     });
     responseContainer.appendChild(pre);
@@ -979,6 +1014,7 @@
       responseContainer.appendChild(video);
     } else {
       var a = createElement('a', {
+        className: 'download-link',
         attrs: { href: url, download: 'response' },
         text: '下载响应文件'
       });
@@ -1169,7 +1205,10 @@
 
     var headers = {};
     currentConfig.headers.forEach(function (h) {
-      if (h.key) headers[h.key] = h.value;
+      if (!h.key) return;
+      var sanitizedKey = h.key.replace(/[\r\n]/g, '');
+      var sanitizedValue = String(h.value || '').replace(/[\r\n]/g, '');
+      if (sanitizedKey) headers[sanitizedKey] = sanitizedValue;
     });
 
     var body = fullConfigToJson(false);
@@ -1226,7 +1265,8 @@
     var isStreaming = false;
     try {
       var bodyObj = JSON.parse(params.body || '{}');
-      isStreaming = bodyObj.stream === true;
+      var streamVal = bodyObj.stream;
+      isStreaming = streamVal === true || streamVal === 'true' || streamVal === 1;
     } catch (e) {
       // 忽略解析错误
     }
@@ -1503,46 +1543,56 @@
   }
 
   function switchView(view) {
-    if (!currentResponseData && !currentRawResponseText) return;
+    if (!currentResponseData && !currentRawResponseText && !streamingResponse) return;
 
     if (view === 'raw') {
       resetStreamElement();
       clearElement(responseContainer);
       var pre = createElement('pre', {
-        styles: { whiteSpace: 'pre-wrap', wordBreak: 'break-all' }
+        className: 'response-pre'
       });
       if (currentResponseType === 'json' && currentResponseData) {
         pre.textContent = JSON.stringify(currentResponseData, null, 2);
       } else if (currentResponseType === 'blob') {
         pre.textContent = '[二进制数据] ' + (currentResponseData && currentResponseData.type ? currentResponseData.type : 'unknown') + '，大小: ' + (currentResponseData && currentResponseData.size ? currentResponseData.size : '?') + ' bytes';
-      } else if (currentResponseType === 'stream' && currentRawResponseText) {
-        pre.textContent = currentRawResponseText;
+      } else if (currentResponseType === 'stream') {
+        pre.textContent = streamingResponse || currentRawResponseText || '';
       } else {
         pre.textContent = currentRawResponseText || String(currentResponseData);
       }
       responseContainer.appendChild(pre);
     } else {
+      resetStreamElement();
+      clearElement(responseContainer);
       if (currentResponseType === 'json' && currentResponseData) {
         renderResponse(currentResponseData);
       } else if (currentResponseType === 'blob' && currentResponseData) {
         renderBlobResponse(currentResponseData, currentResponseData.type || 'application/octet-stream');
-      } else if (currentResponseType === 'stream' && currentResponseData) {
-        var fullContent = '';
-        for (var i = 0; i < currentResponseData.length; i++) {
-          var event = currentResponseData[i];
-          var deltaText = '';
-          if (event.choices && event.choices[0] && event.choices[0].delta) {
-            deltaText = event.choices[0].delta.content || '';
-            var reasoning = event.choices[0].delta.reasoning_content;
-            if (reasoning) {
-              deltaText = '[思考] ' + reasoning + '\n' + deltaText;
+      } else if (currentResponseType === 'stream') {
+        var fullContent = streamingResponse || '';
+        if (!fullContent && currentResponseData) {
+          for (var i = 0; i < currentResponseData.length; i++) {
+            var event = currentResponseData[i];
+            var deltaText = '';
+            if (event.choices && event.choices[0] && event.choices[0].delta) {
+              deltaText = event.choices[0].delta.content || '';
+              var reasoning = event.choices[0].delta.reasoning_content;
+              if (reasoning) {
+                deltaText = '[思考] ' + reasoning + '\n' + deltaText;
+              }
+            } else if (event.output && event.output[0] && event.output[0].content && event.output[0].content[0] && event.output[0].content[0].text) {
+              deltaText = event.output[0].content[0].text;
             }
-          } else if (event.output && event.output[0] && event.output[0].content && event.output[0].content[0] && event.output[0].content[0].text) {
-            deltaText = event.output[0].content[0].text;
+            fullContent += deltaText;
           }
-          fullContent += deltaText;
         }
-        renderTextResponse(fullContent, 'text/plain');
+        if (fullContent) {
+          var streamPre = createElement('pre', {
+            className: 'response-pre'
+          });
+          streamPre.textContent = fullContent;
+          responseContainer.appendChild(streamPre);
+        }
       } else {
         renderTextResponse(currentRawResponseText || '', 'text/plain');
       }
@@ -1584,7 +1634,7 @@
       });
       var emptySpan = createElement('span', {
         className: 'config-name',
-        styles: { color: 'var(--text-muted)' },
+        styles: { color: 'var(--text-tertiary)' },
         text: '暂无保存的配置'
       });
       empty.appendChild(emptySpan);
@@ -1986,6 +2036,231 @@
     }
   }
 
+  // ==================== 文件上传 ====================
+
+  function getUploadAccept(type) {
+    switch (type) {
+      case 'image': return 'image/*';
+      case 'audio': return 'audio/*';
+      case 'video': return 'video/*';
+      default: return '*/*';
+    }
+  }
+
+  function getUploadHint(type) {
+    switch (type) {
+      case 'image': return '支持 JPG、PNG、GIF、WEBP 格式';
+      case 'audio': return '支持 MP3、WAV、OGG、M4A 格式';
+      case 'video': return '支持 MP4、WEBM、OGG 格式';
+      default: return '支持常见格式';
+    }
+  }
+
+  function readFileAsBase64(file) {
+    return new Promise(function (resolve, reject) {
+      var reader = new FileReader();
+      reader.onload = function () {
+        var result = reader.result;
+        var base64 = result.substring(result.indexOf(',') + 1);
+        resolve(base64);
+      };
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+  }
+
+  function renderUploadPreview() {
+    clearElement(uploadPreview);
+    uploadedFiles.forEach(function (fileInfo, idx) {
+      var item = createElement('div', { className: 'upload-preview-item' });
+      if (fileInfo.type.startsWith('image/')) {
+        var img = createElement('img', { attrs: { src: fileInfo.dataUrl, alt: fileInfo.name } });
+        item.appendChild(img);
+      } else if (fileInfo.type.startsWith('video/')) {
+        var video = createElement('video', { attrs: { src: fileInfo.dataUrl } });
+        item.appendChild(video);
+      } else if (fileInfo.type.startsWith('audio/')) {
+        var audio = createElement('audio', { attrs: { controls: true, src: fileInfo.dataUrl } });
+        item.appendChild(audio);
+      }
+      var nameSpan = createElement('span', { className: 'file-name', text: fileInfo.name });
+      item.appendChild(nameSpan);
+      var removeBtn = createElement('button', {
+        className: 'remove-file',
+        text: '×',
+        attrs: { 'aria-label': '删除文件', title: '删除' }
+      });
+      removeBtn.addEventListener('click', function () {
+        uploadedFiles.splice(idx, 1);
+        renderUploadPreview();
+      });
+      item.appendChild(removeBtn);
+      uploadPreview.appendChild(item);
+    });
+  }
+
+  function handleFiles(files) {
+    var maxFileSize = C.MAX_UPLOAD_FILE_SIZE_MB * 1024 * 1024;
+    var maxTotalSize = C.MAX_UPLOAD_TOTAL_SIZE_MB * 1024 * 1024;
+
+    var validFiles = Array.from(files).filter(function (file) {
+      if (currentUploadType === 'image' && !file.type.startsWith('image/')) {
+        showToast('「' + file.name + '」不是图片文件，已跳过', 'warning');
+        return false;
+      }
+      if (currentUploadType === 'audio' && !file.type.startsWith('audio/')) {
+        showToast('「' + file.name + '」不是音频文件，已跳过', 'warning');
+        return false;
+      }
+      if (currentUploadType === 'video' && !file.type.startsWith('video/')) {
+        showToast('「' + file.name + '」不是视频文件，已跳过', 'warning');
+        return false;
+      }
+      if (file.size > maxFileSize) {
+        showToast('「' + file.name + '」超过 ' + C.MAX_UPLOAD_FILE_SIZE_MB + 'MB 限制（当前 ' + (file.size / 1024 / 1024).toFixed(1) + 'MB），已跳过', 'warning');
+        return false;
+      }
+      return true;
+    });
+
+    if (validFiles.length === 0) return;
+
+    var currentTotalSize = uploadedFiles.reduce(function (sum, f) { return sum + f.size; }, 0);
+    var newTotalSize = currentTotalSize + validFiles.reduce(function (sum, f) { return sum + f.size; }, 0);
+    if (newTotalSize > maxTotalSize) {
+      showToast('上传文件总大小超过 ' + C.MAX_UPLOAD_TOTAL_SIZE_MB + 'MB 限制，请减少文件数量或大小', 'error');
+      return;
+    }
+
+    var promises = validFiles.map(function (file) {
+      return readFileAsBase64(file).then(function (base64) {
+        return {
+          name: file.name,
+          type: file.type,
+          size: file.size,
+          dataUrl: 'data:' + file.type + ';base64,' + base64,
+          base64: base64
+        };
+      });
+    });
+
+    Promise.all(promises).then(function (results) {
+      uploadedFiles = uploadedFiles.concat(results);
+      renderUploadPreview();
+      showToast('已上传 ' + results.length + ' 个文件', 'success');
+    }).catch(function (err) {
+      showToast('文件读取失败：' + err.message, 'error');
+    });
+  }
+
+  function insertFilesToMessages() {
+    if (uploadedFiles.length === 0) {
+      showToast('请先上传文件', 'warning');
+      return;
+    }
+
+    var endpointPath = getEndpointPathValue();
+    if (endpointPath !== '/chat/completions' && endpointPath !== '/responses') {
+      showToast('当前端点不支持多模态消息，请切换到 /chat/completions 或 /responses', 'warning');
+      return;
+    }
+
+    if (!currentConfig.body.messages || !Array.isArray(currentConfig.body.messages)) {
+      currentConfig.body.messages = [];
+    }
+
+    var contentArray = uploadedFiles.map(function (file) {
+      if (file.type.startsWith('image/')) {
+        return {
+          type: 'image_url',
+          image_url: { url: file.dataUrl, detail: 'auto' }
+        };
+      }
+      if (file.type.startsWith('audio/')) {
+        var format = file.type.split('/')[1] || 'mp3';
+        if (format === 'mpeg') format = 'mp3';
+        if (format === 'x-wav' || format === 'wav') format = 'wav';
+        return {
+          type: 'input_audio',
+          input_audio: { data: file.base64, format: format }
+        };
+      }
+      if (file.type.startsWith('video/')) {
+        return {
+          type: 'image_url',
+          image_url: { url: file.dataUrl, detail: 'auto' }
+        };
+      }
+      return {
+        type: 'image_url',
+        image_url: { url: file.dataUrl, detail: 'auto' }
+      };
+    });
+
+    contentArray.push({ type: 'text', text: '' });
+
+    currentConfig.body.messages.push({
+      role: 'user',
+      content: contentArray
+    });
+
+    renderFormMode();
+    updateJsonPreview();
+    showToast('文件已插入到 messages（最后一条 user 消息）', 'success');
+  }
+
+  function bindUploadEvents() {
+    document.querySelectorAll('.upload-tab').forEach(function (tab) {
+      tab.addEventListener('click', function () {
+        document.querySelectorAll('.upload-tab').forEach(function (t) { t.classList.remove('active'); });
+        tab.classList.add('active');
+        currentUploadType = tab.dataset.uploadType;
+        fileInput.accept = getUploadAccept(currentUploadType);
+        uploadHint.textContent = getUploadHint(currentUploadType);
+      });
+    });
+
+    if (uploadDropzone) {
+      uploadDropzone.addEventListener('click', function () {
+        fileInput.click();
+      });
+
+      uploadDropzone.addEventListener('dragover', function (e) {
+        e.preventDefault();
+        uploadDropzone.classList.add('dragover');
+      });
+
+      uploadDropzone.addEventListener('dragleave', function () {
+        uploadDropzone.classList.remove('dragover');
+      });
+
+      uploadDropzone.addEventListener('drop', function (e) {
+        e.preventDefault();
+        uploadDropzone.classList.remove('dragover');
+        handleFiles(e.dataTransfer.files);
+      });
+    }
+
+    if (fileInput) {
+      fileInput.addEventListener('change', function (e) {
+        handleFiles(e.target.files);
+        fileInput.value = '';
+      });
+    }
+
+    if (clearFilesBtn) {
+      clearFilesBtn.addEventListener('click', function () {
+        uploadedFiles = [];
+        renderUploadPreview();
+        showToast('已清空上传文件', 'info');
+      });
+    }
+
+    if (insertFilesBtn) {
+      insertFilesBtn.addEventListener('click', insertFilesToMessages);
+    }
+  }
+
   // ==================== 侧边栏管理 ====================
 
   function initSidebar() {
@@ -2091,6 +2366,7 @@
     bindFormEvents();
     bindConfigEvents();
     bindResponseTabEvents();
+    bindUploadEvents();
     initSidebar();
 
     restoreFromUrlParams();

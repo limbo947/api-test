@@ -23,6 +23,9 @@
   var JSON_PREVIEW_DELAY_MS = 300;
   var FETCH_MODELS_DEBOUNCE_MS = 1500;
 
+  var MAX_UPLOAD_FILE_SIZE_MB = 20;
+  var MAX_UPLOAD_TOTAL_SIZE_MB = 50;
+
   var ENDPOINT_TEMPLATES = {
     '/chat/completions': {
       params: [
@@ -481,6 +484,8 @@
     JSON_SYNC_DELAY_MS: JSON_SYNC_DELAY_MS,
     JSON_PREVIEW_DELAY_MS: JSON_PREVIEW_DELAY_MS,
     FETCH_MODELS_DEBOUNCE_MS: FETCH_MODELS_DEBOUNCE_MS,
+    MAX_UPLOAD_FILE_SIZE_MB: MAX_UPLOAD_FILE_SIZE_MB,
+    MAX_UPLOAD_TOTAL_SIZE_MB: MAX_UPLOAD_TOTAL_SIZE_MB,
     getEndpointParams: getEndpointParams,
     getEndpointDefaultBody: getEndpointDefaultBody,
     endpointHasMessages: endpointHasMessages,

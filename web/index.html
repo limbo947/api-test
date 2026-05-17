@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="zh-CN" style="color-scheme: dark">
+<html lang="zh-CN" data-theme="aurora" style="color-scheme: dark">
 <head>
   <meta charset="UTF-8">
   <meta name="theme-color" content="#0f172a">
@@ -7,7 +7,7 @@
   <title>OpenAI API Debugger (兼容 Chat Completions / Responses)</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -27,8 +27,8 @@
 
     <div class="sidebar-section">
       <div class="sidebar-section-title">工作区</div>
-      <a href="#" class="sidebar-item active" data-panel="config">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <a href="#" class="sidebar-item active" data-panel="config" aria-current="page">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/>
         </svg>
         <span>请求配置</span>
@@ -39,7 +39,7 @@
       <div class="sidebar-section-title">管理</div>
       <div class="sidebar-item-wrap">
         <a href="#" class="sidebar-item" data-panel="saved-configs">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
             <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/>
             <polyline points="17 21 17 13 7 13 7 21"/>
             <polyline points="7 3 7 8 15 8"/>
@@ -47,7 +47,7 @@
           <span>配置方案</span>
         </a>
         <button type="button" class="sidebar-expand" id="configExpandBtn" aria-label="展开配置方案" title="展开">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
             <polyline points="6 9 12 15 18 9"/>
           </svg>
         </button>
@@ -56,11 +56,11 @@
         <div class="sidebar-submenu-list" id="configSubmenuList"></div>
         <div class="sidebar-submenu-actions">
           <input type="text" id="quickConfigName" placeholder="新配置名称…" autocomplete="off" spellcheck="false">
-          <button type="button" id="quickSaveConfigBtn">保存当前配置</button>
+          <button type="button" id="quickSaveConfigBtn">保存</button>
         </div>
       </div>
       <a href="#" class="sidebar-item" data-panel="history">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <circle cx="12" cy="12" r="10"/>
           <polyline points="12 6 12 12 16 14"/>
         </svg>
@@ -107,13 +107,39 @@
       <section class="card form-mode" id="formHeadersSection">
         <h2>请求头</h2>
         <div id="headersContainer"></div>
-        <button type="button" id="addHeaderBtn">+ 添加请求头</button>
+        <button type="button" id="addHeaderBtn" class="secondary">+ 添加请求头</button>
       </section>
 
       <section class="card form-mode" id="formBodySection">
         <h2>请求参数（表单）</h2>
         <div id="formContainer"></div>
-        <button type="button" id="addParamBtn">+ 添加自定义参数</button>
+        <button type="button" id="addParamBtn" class="secondary">+ 添加自定义参数</button>
+      </section>
+
+      <section class="card form-mode" id="fileUploadSection">
+        <h2>文件上传（多模态）</h2>
+        <div class="upload-tabs">
+          <button type="button" class="upload-tab active" data-upload-type="image">图片</button>
+          <button type="button" class="upload-tab" data-upload-type="audio">语音</button>
+          <button type="button" class="upload-tab" data-upload-type="video">视频</button>
+        </div>
+        <div class="upload-area" id="uploadArea">
+          <input type="file" id="fileInput" accept="image/*" style="display:none">
+          <div class="upload-dropzone" id="uploadDropzone">
+            <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+              <polyline points="17 8 12 3 7 8"/>
+              <line x1="12" y1="3" x2="12" y2="15"/>
+            </svg>
+            <p>点击选择文件或拖拽到此处</p>
+            <span class="upload-hint" id="uploadHint">支持 JPG、PNG、GIF、WEBP 格式</span>
+          </div>
+        </div>
+        <div class="upload-preview" id="uploadPreview"></div>
+        <div class="upload-actions">
+          <button type="button" id="clearFilesBtn" class="small danger">清空文件</button>
+          <button type="button" id="insertFilesBtn" class="small">插入到 messages</button>
+        </div>
       </section>
 
       <section class="card actions">
@@ -261,7 +287,15 @@
 
   <datalist id="modelDatalist"></datalist>
 
+  <div class="theme-switcher" role="radiogroup" aria-label="主题切换">
+    <span class="theme-switcher-label">主题</span>
+    <button type="button" class="theme-btn active" data-theme="aurora" aria-label="极光科技主题" title="极光科技"></button>
+    <button type="button" class="theme-btn" data-theme="warm" aria-label="暖光工坊主题" title="暖光工坊"></button>
+    <button type="button" class="theme-btn" data-theme="cosmic" aria-label="星际指挥主题" title="星际指挥"></button>
+  </div>
+
   <script src="config.js"></script>
   <script src="app.js"></script>
+  <script src="theme.js"></script>
 </body>
 </html>
