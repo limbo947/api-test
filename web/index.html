@@ -2,12 +2,12 @@
 <html lang="zh-CN" data-theme="aurora" style="color-scheme: dark">
 <head>
   <meta charset="UTF-8">
-  <meta name="theme-color" content="#0f172a">
+  <meta name="theme-color" content="#09090B">
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; connect-src 'self' https: wss:; img-src 'self' data: blob:; media-src 'self' blob:; font-src 'self' https://fonts.gstatic.com">
   <title>OpenAI API Debugger (兼容 Chat Completions / Responses)</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -25,26 +25,21 @@
       <span>API 调试器</span>
     </div>
 
-    <div class="sidebar-section">
-      <div class="sidebar-section-title">工作区</div>
-      <a href="#" class="sidebar-item active" data-panel="config" aria-current="page">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-          <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/>
-        </svg>
-        <span>请求配置</span>
-      </a>
-    </div>
+    <button type="button" class="sidebar-collapse-btn" id="sidebarCollapseBtn" title="收起侧边栏" aria-label="收起侧边栏">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M11 19l-7-7 7-7"/>
+        <path d="M18 5l-7 7 7 7"/>
+      </svg>
+    </button>
 
     <div class="sidebar-section">
-      <div class="sidebar-section-title">管理</div>
+      <div class="sidebar-section-title">工作区</div>
       <div class="sidebar-item-wrap">
-        <a href="#" class="sidebar-item" data-panel="saved-configs">
+        <a href="#" class="sidebar-item active" data-panel="config" aria-current="page">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/>
-            <polyline points="17 21 17 13 7 13 7 21"/>
-            <polyline points="7 3 7 8 15 8"/>
+            <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/>
           </svg>
-          <span>配置方案</span>
+          <span>请求配置</span>
         </a>
         <button type="button" class="sidebar-expand" id="configExpandBtn" aria-label="展开配置方案" title="展开">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -59,6 +54,16 @@
           <button type="button" id="quickSaveConfigBtn">保存</button>
         </div>
       </div>
+      <a href="#" class="sidebar-item" data-panel="chat">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+        </svg>
+        <span>对话</span>
+      </a>
+    </div>
+
+    <div class="sidebar-section">
+      <div class="sidebar-section-title">管理</div>
       <a href="#" class="sidebar-item" data-panel="history">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <circle cx="12" cy="12" r="10"/>
@@ -88,6 +93,7 @@
           <button type="button" id="fetchModelsBtn" class="small" title="从 /models 端点获取模型列表">获取模型</button>
         </div>
         <div id="modelFetchStatus" class="fetch-status"></div>
+        <div id="modelRowContainer"></div>
 
         <label for="httpMethod">HTTP 方法</label>
         <select id="httpMethod" autocomplete="off">
@@ -108,6 +114,31 @@
         <h2>请求头</h2>
         <div id="headersContainer"></div>
         <button type="button" id="addHeaderBtn" class="secondary">+ 添加请求头</button>
+      </section>
+
+      <section class="card form-mode" id="apiKeyManagerSection">
+        <h2>密钥管理</h2>
+        <div id="apiKeyManagerContent">
+          <div class="apikey-store-list" id="apiKeyList"></div>
+          <div class="apikey-add-form" id="apiKeyAddForm">
+            <div class="apikey-form-row">
+              <input type="text" id="newApiKeyName" placeholder="密钥名称（如：OpenAI 主账号）" autocomplete="off" spellcheck="false">
+              <select id="newApiKeyProvider" autocomplete="off">
+                <option value="openai">OpenAI</option>
+                <option value="azure">Azure OpenAI</option>
+                <option value="anthropic">Anthropic</option>
+                <option value="custom">其他</option>
+              </select>
+            </div>
+            <div class="apikey-form-row">
+              <input type="password" id="newApiKeyValue" placeholder="输入 API Key（sk-…）" autocomplete="off" spellcheck="false">
+              <button type="button" id="toggleKeyVisibility" class="small" title="显示/隐藏密钥">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+              </button>
+            </div>
+            <button type="button" id="saveApiKeyBtn" class="secondary">保存密钥</button>
+          </div>
+        </div>
       </section>
 
       <section class="card form-mode" id="formBodySection">
@@ -175,6 +206,156 @@
         <div id="responseContainer" class="response-container" aria-live="polite"></div>
       </section>
     </main>
+
+    <!-- 对话模式界面 -->
+    <div class="chat-view" id="chatView" style="display:none;">
+      <div class="chat-layout">
+        <div class="chat-main">
+          <div class="chat-topbar">
+            <div class="chat-topbar-left">
+              <div class="chat-topbar-icon">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+                </svg>
+              </div>
+              <div class="chat-topbar-info">
+                <span class="chat-topbar-title">对话</span>
+                <span class="chat-topbar-status" id="chatHeaderSub">就绪</span>
+              </div>
+            </div>
+            <div class="chat-topbar-right">
+              <div class="chat-model-selector">
+                <svg class="chat-model-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/><path d="M15 2v2"/><path d="M15 20v2"/><path d="M2 15h2"/><path d="M2 9h2"/><path d="M20 15h2"/><path d="M20 9h2"/><path d="M9 2v2"/><path d="M9 20v2"/>
+                </svg>
+                <select id="chatModelSelect" autocomplete="off" aria-label="选择模型" style="display:none">
+                  <option value="">选择模型…</option>
+                </select>
+                <div id="chatModelDropdown" class="custom-dropdown" aria-label="选择模型"></div>
+              </div>
+              <div class="chat-topbar-sep"></div>
+              <button type="button" id="chatClearBtn" class="chat-action-btn" title="清空对话">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/>
+                </svg>
+              </button>
+              <button type="button" id="chatSettingsBtn" class="chat-action-btn" title="对话设置">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/>
+                  <circle cx="12" cy="12" r="3"/>
+                </svg>
+              </button>
+              <button type="button" id="chatHistoryBtn" class="chat-action-btn" title="历史对话">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>
+                </svg>
+              </button>
+            </div>
+          </div>
+
+          <div class="chat-messages" id="chatMessages">
+            <div class="chat-empty" id="chatEmptyState">
+              <div class="chat-empty-logo">
+                <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2z"/>
+                  <path d="M12 16v-4"/>
+                  <path d="M12 8h.01"/>
+                </svg>
+              </div>
+              <h3 class="chat-empty-title">开始新的对话</h3>
+              <p class="chat-empty-desc">选择模型并输入消息，与 AI 开始交流</p>
+              <div class="chat-empty-hints">
+                <button type="button" class="chat-hint-chip" data-hint="帮我解释一段代码">解释代码</button>
+                <button type="button" class="chat-hint-chip" data-hint="帮我写一个 Python 函数">编写函数</button>
+                <button type="button" class="chat-hint-chip" data-hint="分析这段文本的主要观点">分析文本</button>
+                <button type="button" class="chat-hint-chip" data-hint="帮我优化这段代码的性能">优化代码</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="chat-composer">
+            <div class="chat-composer-box">
+              <textarea id="chatInput" rows="1" placeholder="输入消息…" autocomplete="off" spellcheck="false"></textarea>
+              <div class="chat-composer-actions">
+                <button type="button" id="chatSendBtn" class="chat-send-btn" title="发送" aria-label="发送消息">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M5 12h14"/><path d="m12 5 7 7-7 7"/>
+                  </svg>
+                </button>
+                <button type="button" id="chatStopBtn" class="chat-stop-btn" title="停止生成" aria-label="停止生成" style="display:none;">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                    <rect x="6" y="6" width="12" height="12" rx="2"/>
+                  </svg>
+                </button>
+              </div>
+            </div>
+            <div class="chat-composer-footer">
+              <span class="chat-model-tag" id="chatModelBadge">未选择模型</span>
+              <span class="chat-token-count" id="chatTokenInfo"></span>
+            </div>
+          </div>
+        </div>
+
+        <div class="chat-settings-drawer" id="chatSettingsPanel" style="display:none;">
+          <div class="chat-drawer-header">
+            <h3>对话设置</h3>
+            <button type="button" id="chatSettingsCloseBtn" class="chat-action-btn" title="关闭设置">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M18 6 6 18"/><path d="m6 6 12 12"/>
+              </svg>
+            </button>
+          </div>
+          <div class="chat-drawer-body">
+            <div class="chat-field">
+              <label for="chatSystemPrompt">系统提示词</label>
+              <textarea id="chatSystemPrompt" rows="4" placeholder="你是一个有帮助的助手。">你是一个有帮助的助手。</textarea>
+            </div>
+            <div class="chat-field">
+              <label for="chatTemperature">温度 <span id="chatTemperatureVal">1.0</span></label>
+              <input type="range" id="chatTemperature" min="0" max="2" step="0.1" value="1">
+            </div>
+            <div class="chat-field">
+              <label for="chatMaxTokens">最大 Token 数</label>
+              <input type="number" id="chatMaxTokens" value="4096" min="1" max="128000" step="1">
+            </div>
+            <div class="chat-field">
+              <label for="chatStreamToggle">流式输出</label>
+              <label class="chat-toggle">
+                <input type="checkbox" id="chatStreamToggle" checked>
+                <span class="chat-toggle-track">
+                  <span class="chat-toggle-thumb"></span>
+                </span>
+              </label>
+            </div>
+          </div>
+        </div>
+
+        <div class="chat-history-drawer" id="chatHistoryPanel" style="display:none;">
+          <div class="chat-drawer-header">
+            <h3>历史对话</h3>
+            <div class="chat-history-actions">
+              <button type="button" id="chatNewConversationBtn" class="chat-history-action-btn" title="新建对话">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="M12 5v14"/><path d="M5 12h14"/>
+                </svg>
+              </button>
+              <button type="button" id="chatHistoryCloseBtn" class="chat-action-btn" title="关闭历史">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="M18 6 6 18"/><path d="m6 6 12 12"/>
+                </svg>
+              </button>
+            </div>
+          </div>
+          <div class="chat-history-search">
+            <input type="text" id="chatHistorySearch" placeholder="搜索对话…" autocomplete="off" spellcheck="false">
+          </div>
+          <div class="chat-history-list" id="chatHistoryList"></div>
+          <div class="chat-history-footer">
+            <button type="button" id="chatClearAllHistoryBtn" class="chat-history-clear-btn">清空所有对话</button>
+          </div>
+        </div>
+      </div>
+    </div>
   </div>
 
   <!-- 浮动面板：配置方案 -->
@@ -289,12 +470,14 @@
 
   <div class="theme-switcher" role="radiogroup" aria-label="主题切换">
     <span class="theme-switcher-label">主题</span>
-    <button type="button" class="theme-btn active" data-theme="aurora" aria-label="极光科技主题" title="极光科技"></button>
-    <button type="button" class="theme-btn" data-theme="warm" aria-label="暖光工坊主题" title="暖光工坊"></button>
-    <button type="button" class="theme-btn" data-theme="cosmic" aria-label="星际指挥主题" title="星际指挥"></button>
+    <button type="button" class="theme-btn active" data-theme="aurora" aria-label="翡翠科技主题" title="翡翠科技"></button>
+    <button type="button" class="theme-btn" data-theme="warm" aria-label="琥珀工坊主题" title="琥珀工坊"></button>
+    <button type="button" class="theme-btn" data-theme="cosmic" aria-label="星际幽蓝主题" title="星际幽蓝"></button>
   </div>
 
   <script src="config.js"></script>
+  <script src="upload.js"></script>
+  <script src="share.js"></script>
   <script src="app.js"></script>
   <script src="theme.js"></script>
 </body>
